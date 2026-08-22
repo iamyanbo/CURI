@@ -98,9 +98,11 @@ int main(int argc, char** argv) {
   double peak_tflops_fp32 = 2.0 * prop.multiProcessorCount * 128 *
     prop.clockRate * 1e3 / 1e12;
 
-  printf("{\n  \"device\": \"%s\",\n  \"peak_tflops_fp32\": %.3f,"
-         "  \"reps\": %d,\n  \"shapes\": [\n",
-         prop.name, peak_tflops_fp32, reps);
+  printf("{\n  \"device\": \"%s\",\n  \"compute_capability\": \"%d.%d\",\n"
+         "  \"sm_count\": %d,  \"clock_rate_khz\": %d,\n"
+         "  \"peak_tflops_fp32\": %.3f,  \"reps\": %d,\n  \"shapes\": [\n",
+         prop.name, prop.major, prop.minor, prop.multiProcessorCount, prop.clockRate,
+         peak_tflops_fp32, reps);
 
   double vis_sum = 0, hid_sum = 0; int vis_n = 0, hid_n = 0;
   double worst_viol = 0.0;

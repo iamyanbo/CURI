@@ -112,5 +112,6 @@
     }
   ],
   "executorRules": "2b. `kernel.cu` MUST keep the exact single-line signature\n    `extern \"C\" void run_attention(const float* Q, const float* K, const float* V,\n    float* O, int B, int H, int T, int D)`. The protected benchmark links\n    against it directly and owns all timing and device synchronisation, so you\n    cannot win by skipping a sync. Q,K,V,O are fp32 with layout [B][H][T][D];\n    O is the attention output.\n2c. Your kernel is measured on shapes you have not seen, including D values\n    up to 96 and T up to 512. A launch configuration that is illegal for some\n    shape voids the whole measurement.\n2d. The metric is achieved TFLOP/s = 4*B*H*T*T*D / time. Correctness uses a\n    relative tolerance with an absolute floor (3e-3 rel / 1e-4 abs), checked\n    elementwise against a double-precision reference.",
+  "_precisionPolicy": "FP32 only. Tensor-core, WMMA, MMA, TF32 and cuBLAS paths are outside this domain's numerical and roofline contract and are rejected by the protected evaluator.",
   "_literatureAccess": "LITERATURE ACCESS: pull only. Kernel technique does not change hour to hour and cycles are minutes, so the manager's own searches cover it. See docs/literature-access.md."
 }

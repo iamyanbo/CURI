@@ -1,7 +1,7 @@
 # What Breaks in an Autoresearch Harness — Findings
 
 Date: 2026-08-21
-Status: draft findings from building and running `pi-autoresearch` v0
+Status: draft findings from building and running the original local prototype
 Scope: one system, two domains (a tiny language model on CPU, a CUDA softmax kernel on an
 RTX 3060 Ti), ~30 hours of construction and 13h 34m of unattended operation.
 Every number below comes from `.autoresearch/state.sqlite`, the archived run logs, or the two
@@ -282,7 +282,7 @@ ALiBi, learnable slopes, convolutional stems, sparse MoE routing, slot memory �
 ablations to attack its own accepted conclusions.
 
 **None of the semantic defects would have been prevented by fencing tokens, leases, epochs, or
-process-tree ownership** — the machinery `plans/03` front-loads into M0. Defect 8 is the exception
+process-tree ownership** — machinery the original technical plan front-loaded into M0. Defect 8 is the exception
 that proves the rule: `03` specified a bounded, deterministic context packet, the unbounded version
 was built for speed, and it crashed the run.
 
@@ -334,4 +334,4 @@ only on re-reading the gate order after the test went green.
   whether the harness *searches* better, only whether it *decides* better.
 - **The leakage-pooling fix in §5.1 is diagnosed but not yet implemented**, so the 10%
   false-negative figure stands as measured.
-- **No durability testing.** `plans/04` §7.2 specified a four-edge crash matrix; it was never run.
+- **No durability testing.** The original plan specified a four-edge crash matrix; it was never run.

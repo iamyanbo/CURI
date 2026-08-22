@@ -1,4 +1,10 @@
 node_modules/
+dist/
+infra/.terraform/
+infra/*.tfstate*
+infra/terraform.tfvars
+__pycache__/
+*.pyc
 .autoresearch/
 domains/tinyml/candidate/out/
 domains/tinyml/data/*.bin

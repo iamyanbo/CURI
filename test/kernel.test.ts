@@ -1,6 +1,6 @@
 /**
  * Day-1 kernel tests. Two of these are the property tests named in
- * plans/04-v0-build-plan.md §2.1 and §7.1; the rest guard the event chain.
+ * The original invariants; the remaining tests guard the event chain.
  */
 
 import assert from "node:assert/strict";

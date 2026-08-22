@@ -1,0 +1,9 @@
+.git
+.autoresearch
+node_modules
+dist
+coverage
+*.sqlite*
+*.log
+plans
+test

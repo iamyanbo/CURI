@@ -226,6 +226,7 @@ def main() -> int:
     def emit(primary, secondary, raw):
         pathlib.Path(args.out).write_text(
             json.dumps({"primary": primary, "secondary": secondary,
+                        "measurement_resolution": 1e-12,
                         "checks": checks, **raw}, indent=1), encoding="utf8")
         return 0
 

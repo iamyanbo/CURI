@@ -36,6 +36,8 @@ export interface JudgeInput {
   evaluationOk: boolean;
   primaryValue: number | null;
   baselineValue: number | null;
+  /** Evaluator-reported instrument/output resolution in metric units. */
+  measurementResolution?: number;
 
   allChecksPassed: boolean;
   failedChecks: string[];
@@ -107,7 +109,7 @@ export function judge(input: JudgeInput): JudgeVerdict {
 
   if (input.protectedHashBefore !== input.protectedHashAfter) {
     // An operator editing the evaluator mid-campaign must invalidate the
-    // in-flight cycle - `plans/01` §6.1 requires exactly that - but it is a
+    // in-flight cycle, which the trust boundary permits, but it is a
     // repair, not an attack. Observed live: an operator recalibrated the
     // leakage floor while a cycle ran and an innocent candidate was accused.
     if (input.protectedChangeAuthorised) {
@@ -184,13 +186,18 @@ export function judge(input: JudgeInput): JudgeVerdict {
     ? input.baselineValue - input.primaryValue
     : input.primaryValue - input.baselineValue;
 
-  // An exactly-unchanged metric is not a small effect; it means the model is
-  // bitwise identical to the baseline. What that implies depends on the lane.
-  const unchanged = Math.abs(delta) < 1e-9;
-  if (unchanged) {
+  // "Exactly equal" is an output-format claim, not a physical one. GPU event
+  // timers and rounded evaluator JSON can map a small real change onto the same
+  // number, so classify values inside the instrument resolution honestly.
+  const resolution = typeof input.measurementResolution === "number"
+    && Number.isFinite(input.measurementResolution) && input.measurementResolution >= 0
+    ? input.measurementResolution : 0;
+  const unmeasurable = Math.abs(delta) <= Math.max(resolution, Number.EPSILON);
+  if (unmeasurable) {
     if (!input.laneExpectsChange) {
       return verdict("tested", ["CONTROL_CONFIRMED"], delta, false,
-        "the control left the metric exactly unchanged, which is the expected outcome; the measurement path is behaving");
+        `the control moved the metric by no more than the instrument resolution (${resolution}); `
+        + "this is the expected outcome and the measurement path is behaving");
     }
     // A null result, not a broken candidate.
     //
@@ -203,15 +210,10 @@ export function judge(input: JudgeInput): JudgeVerdict {
     // stop condition, a run of honest null results could halt a healthy
     // campaign as though the harness were broken.
     //
-    // The reason code stays `INTERVENTION_HAD_NO_EFFECT`, so the stronger
-    // statement - the metric did not move AT ALL, rather than moving less than
-    // the threshold - is still recoverable from the evidence.
-    return verdict("inconclusive", ["INTERVENTION_HAD_NO_EFFECT"], delta, false,
-      "the candidate measured identically to the baseline, so the change had no effect on this "
-      + "benchmark. That is a null result and is retained as one: the implementation was valid, "
-      + "it ran, and the intervention did not move the metric. Note this device's timer is "
-      + "quantised, so an identical reading can also mean the effect was below the instrument's "
-      + "resolution rather than exactly zero.");
+    return verdict("inconclusive", ["NO_MEASURABLE_EFFECT"], delta, false,
+      `the candidate moved the metric by no more than the evaluator's resolution (${resolution}). `
+      + "The implementation was valid and the null result is retained, but the evidence cannot "
+      + "distinguish zero effect from an effect below the instrument's resolution.");
   }
 
   if (delta >= input.thresholds.supportDelta) {

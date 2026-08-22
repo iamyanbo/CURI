@@ -1,0 +1,21 @@
+FROM node:22-bookworm AS build
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
+RUN npm ci
+COPY src ./src
+RUN npm run build && npm prune --omit=dev
+
+# Cloud Run L4 currently exposes a CUDA 12.2 driver. Keep the toolkit compatible.
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
+ENV NODE_ENV=production
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python-is-python3 python3-numpy ca-certificates git \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /usr/local/bin/node /usr/local/bin/node
+WORKDIR /app
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules ./node_modules
+COPY package.json ./package.json
+COPY domains ./domains
+COPY .autoresearch-protected ./.autoresearch-protected
+USER 65532:65532
+ENTRYPOINT ["node", "dist/cloud/evaluation-entry.js"]

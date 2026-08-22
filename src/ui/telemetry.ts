@@ -2,7 +2,7 @@
  * Trace-derived timing used by the dashboard.
  *
  * Worker wall time used to be recorded as one large `model_reasoning` block,
- * even while the model was waiting for a tool or a shell command. Pi's trace
+ * even while the model was waiting for a tool or a command. The sealed worker trace
  * contains paired tool start/end events, so those spans can be removed from
  * model time without guessing. The remaining wall time is deliberately named
  * model reasoning: it means "model active or awaiting a model response", not

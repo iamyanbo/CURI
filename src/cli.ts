@@ -23,6 +23,13 @@ import { DEFAULT_LANE_SHARES } from "./loop/portfolio.js";
 import { latestCampaignId, normaliseCampaignConfig, nowIso, Store } from "./store/store.js";
 import { clearSteer, requestSteer } from "./steer.js";
 import { formatDuration, IntervalRecorder } from "./trace/intervals.js";
+import { configureRuntime } from "./config/runtime.js";
+import { assertCampaignRuntime, runtimeDoctor } from "./config/doctor.js";
+import { CloudRunDispatcher } from "./cloud/cloud-run-dispatcher.js";
+import { CLOUD_TASK_VERSION, type CloudEvaluationTask } from "./cloud/evaluation-task.js";
+import { runDoctor as runDomainDoctor } from "./doctor.js";
+
+const RUNTIME = configureRuntime();
 
 const PROJECT_ROOT = resolve(process.cwd());
 const STATE_DIR = join(PROJECT_ROOT, ".autoresearch");
@@ -161,12 +168,12 @@ function syncBaseRevision(store: Store): void {
 /**
  * Run an unattended campaign under hard ceilings.
  *
- * Defaults are sized from measurement, not guesswork: a full cycle costs about
- * 235s and $0.005, so five hours is roughly 75 cycles and well under a dollar.
- * Wall clock is the binding constraint here, not money.
+ * The model worker prices every response from token usage. The default $20
+ * software ceiling sits below the separate $25 cloud billing alert.
  */
 
 async function cmdCampaign(): Promise<void> {
+  assertCampaignRuntime(RUNTIME);
   // `--detach` re-launches this same command in a background process that
   // outlives the terminal, then returns immediately.
   if (flag("detach") && !process.env.AUTORESEARCH_DETACHED) {
@@ -191,7 +198,7 @@ async function cmdCampaign(): Promise<void> {
   const hours = Number(arg("hours", "5"));
   const budget = {
     wallMs: hours * 3_600_000,
-    costUsd: Number(arg("max-cost", "5")),
+    costUsd: RUNTIME.maxCostUsd,
     maxCycles: Number(arg("max-cycles", "120")),
     parameterQuota: Number(arg("parameter-quota", "0.20")),
     repairCap: Number(arg("repair-cap", "3")),
@@ -233,6 +240,68 @@ ${renderClaimCard(store, CAMPAIGN_ID)}`);
   store.close();
 }
 
+function campaignBaseRevision(store: Store): string {
+  const row = store.db.prepare("SELECT base_revision FROM campaigns WHERE campaign_id = ?")
+    .get(CAMPAIGN_ID) as { base_revision: string } | undefined;
+  if (!row || row.base_revision === "pending") {
+    syncBaseRevision(store);
+    return (store.db.prepare("SELECT base_revision FROM campaigns WHERE campaign_id = ?")
+      .get(CAMPAIGN_ID) as { base_revision: string }).base_revision;
+  }
+  return row.base_revision;
+}
+
+async function cmdCloudEvaluate(): Promise<void> {
+  const domainPath = argOf("domain");
+  if (!domainPath) throw new Error("cloud-evaluate requires --domain path/to/domain.json");
+  const projectId = argOf("project") ?? process.env.GOOGLE_CLOUD_PROJECT;
+  const bucket = argOf("bucket") ?? process.env.AR_ARTIFACT_BUCKET;
+  const jobName = argOf("job") ?? process.env.AR_EVALUATOR_JOB;
+  if (!projectId || !bucket || !jobName) {
+    throw new Error("cloud-evaluate requires GOOGLE_CLOUD_PROJECT, AR_ARTIFACT_BUCKET and AR_EVALUATOR_JOB (or matching flags)");
+  }
+  const store = openStore();
+  ensureCampaign(store);
+  const harness = makeHarness();
+  const revision = campaignBaseRevision(store);
+  const candidateFiles = harness.candidateSource(revision, 5_000_000, 20_000_000);
+  const supportDelta = Number(argOf("support-delta") ?? harness.domain.metric.noiseFloor);
+  const tasks: CloudEvaluationTask[] = harness.reproductionVariants().map((variant, index) => ({
+    version: CLOUD_TASK_VERSION,
+    taskId: `${CAMPAIGN_ID}-${Date.now()}-${index}`,
+    domainConfigPath: domainPath.replace(/\\/g, "/"),
+    candidateFiles,
+    configPatch: variant.configPatch,
+    baselinePrimary: currentBaselineBpc(store),
+    baselineSecondary: currentBaselineHoldoutBpc(store),
+    supportDelta,
+    experimentTimeoutMs: Number(argOf("experiment-timeout-ms") ?? 600_000),
+    evaluatorTimeoutMs: Number(argOf("evaluator-timeout-ms") ?? 600_000),
+  }));
+  store.close();
+  const dispatcher = new CloudRunDispatcher({ projectId, region: RUNTIME.region, jobName, bucket });
+  const results = await dispatcher.evaluate(tasks);
+  console.log(JSON.stringify(results.map((result) => ({
+    taskId: result.taskId, failure: result.failure ?? null,
+    primary: result.evaluation?.primary ?? null, checks: result.evaluation?.checks ?? [],
+  })), null, 2));
+  if (results.some((result) => result.failure)) process.exitCode = 1;
+}
+
+function cmdDoctor(): void {
+  const checks = runtimeDoctor(RUNTIME);
+  for (const check of checks) console.log(`${check.ok ? "OK  " : "FAIL"} ${check.name}: ${check.detail}`);
+  if (checks.some((check) => !check.ok)) process.exitCode = 1;
+}
+
+async function cmdDomainDoctor(): Promise<void> {
+  const domainPath = argOf("domain");
+  if (!domainPath) throw new Error("domain-doctor requires --domain path/to/domain.json");
+  const report = await runDomainDoctor(domainPath, { projectRoot: PROJECT_ROOT });
+  console.log(JSON.stringify(report, null, 2));
+  if (!report.ok) process.exitCode = 1;
+}
+
 /** Ask a detached campaign to stop at the next cycle boundary. */
 function cmdStop(): void {
   const live = inspect(STATE_DIR);
@@ -248,6 +317,7 @@ function cmdStop(): void {
 }
 
 async function cmdCycle(): Promise<void> {
+  assertCampaignRuntime(RUNTIME);
   const store = openStore();
   ensureCampaign(store);
   syncBaseRevision(store);
@@ -500,6 +570,9 @@ switch (cmd) {
     break;
   }
   case "verify": cmdVerify(); break;
+  case "doctor": cmdDoctor(); break;
+  case "cloud-evaluate": await cmdCloudEvaluate(); break;
+  case "domain-doctor": await cmdDomainDoctor(); break;
   default:
     console.log([
       "usage:",
@@ -507,6 +580,8 @@ switch (cmd) {
       "  cli.ts cycle    [--cycles N] [--manager-model M] [--executor-model M] [--keep-worktree]",
       "  cli.ts campaign [--detach] [--domain path/to/domain.json] [--hours 5] [--max-cost 5] [--max-cycles 120] [--repair-cap 3]",
       "                  [--parameter-quota 0.20] [--manager-model M] [--executor-model M]",
+      "  profiles        [--profile local|cloud] [--model-provider gemini-api|vertex-ai]",
+      "                  [--compute local|cloud-run] [--store sqlite|firestore]",
       "  cli.ts stop [--reason \"...\"]",
       "  cli.ts steer \"try shared-memory staging next\"   (applied at the next cycle boundary)",
       "  cli.ts evaluator-change --reason \"...\"   (run after editing .autoresearch-protected/)",
@@ -514,6 +589,9 @@ switch (cmd) {
       "  cli.ts card",
       "  cli.ts advance",
       "  cli.ts verify",
+      "  cli.ts doctor   [--profile local|cloud]",
+      "  cli.ts cloud-evaluate --domain path/to/domain.json --project ID --bucket NAME --job NAME",
+      "  cli.ts domain-doctor --domain path/to/domain.json",
     ].join("\n"));
     process.exitCode = 1;
 }

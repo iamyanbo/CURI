@@ -1,0 +1,6 @@
+project_id      = "your-new-hackathon-project"
+region          = "us-central1"
+evaluator_image = "us-central1-docker.pkg.dev/your-new-hackathon-project/autoresearch/evaluator@sha256:REPLACE_ME"
+billing_account = "000000-000000-000000"
+budget_usd      = 25
+gpu_parallelism = 3

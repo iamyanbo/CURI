@@ -173,6 +173,8 @@ export interface EvaluationResult {
   primary: number | null;
   /** The held-back measurement the candidate could not reach. */
   secondary: number | null;
+  /** Smallest metric movement the evaluator's timer/output precision can resolve. */
+  measurementResolution?: number;
   checks: DomainCheck[];
   raw: unknown;
   durationMs: number;

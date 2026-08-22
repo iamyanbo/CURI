@@ -2,7 +2,7 @@
 
 The manager and executor can search the web. By default this is **pull**: the
 manager searches when it is forming a hypothesis, using `arxiv_search`,
-`web_search`, `code_search` and `fetch_content` from the `pi-web-access` and
+`web_search`, `code_search` and `fetch_content` from the Genkit worker and
 `domain-search` extensions.
 
 There is also a **push** mode — a watcher process (`src/scout.ts`) that polls

@@ -29,21 +29,15 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 
 import { runDoctor, REQUIRED_CHEAT_KINDS } from "./doctor.js";
-import { runPiWorker } from "./worker/pi-worker.js";
+import { runWorker } from "./worker/genkit-worker.js";
 
 const ROOT = process.cwd();
 const argOf = (n: string) => {
   const i = process.argv.indexOf(`--${n}`);
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
-
-const SEARCH_EXTENSIONS = [
-  join(homedir(), ".pi", "agent", "npm", "node_modules", "pi-web-access", "index.ts"),
-  join(homedir(), ".pi", "agent", "extensions", "domain-search", "index.ts"),
-];
 
 function brief(task: string, slug: string, priorFailures: string[]): string {
   const retry = priorFailures.length > 0
@@ -153,7 +147,7 @@ async function main(): Promise<void> {
   // Stealth models rotate and rate-limit; a setup run that silently produces
   // nothing is worse than one that refuses to start. Default to a model with a
   // paid quota, override with --model.
-  const model = argOf("model") ?? process.env.AR_MODEL ?? "fireworks/deepseek-v4-flash-0731";
+  const model = argOf("model") ?? process.env.AR_MODEL ?? "gemini-3.5-flash";
   const domainPath = join("domains", `${slug}.domain.json`);
 
   mkdirSync(join(ROOT, "domains", slug, "candidate"), { recursive: true });
@@ -164,15 +158,13 @@ async function main(): Promise<void> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     console.log(`\n=== setup attempt ${attempt}/${maxAttempts} · ${slug} ===`);
 
-    const run = await runPiWorker({
-      role: "executor",
+    const run = await runWorker({
+      role: "setup",
       prompt: brief(task, slug, failures),
       cwd: ROOT,
       attemptDir: join(ROOT, ".autoresearch", "setup", `${slug}-${attempt}`),
-      isolatedHome: join(ROOT, ".autoresearch", "worker-home"),
       tools: ["read", "write", "edit", "grep", "find", "ls", "bash",
               "web_search", "arxiv_search", "code_search", "fetch_content"],
-      extensions: SEARCH_EXTENSIONS,
       model,
       timeoutMs: 45 * 60_000,
     });

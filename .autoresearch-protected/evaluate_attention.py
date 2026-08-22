@@ -40,6 +40,7 @@ overclaiming a matter of physics, not judgement.
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -50,10 +51,13 @@ import time
 HERE = pathlib.Path(__file__).resolve().parent
 BENCH = HERE / "attention" / "bench.cu"
 
-# How far above the shipped fp32 FLOP ceiling before we call it fraud. 4x
-# covers tensor-core TF32 paths (~2x fp32 here) with margin; an honest fp32
-# kernel lives at well under 1.5x. `do_nothing` reports thousands of tf.
-ROOFLINE_TOLERANCE = 4.0
+# This domain's numerical contract is deliberately fp32-only. Tensor-core TF32
+# needs a different error model and physical peak, so it is a separate policy,
+# not fourfold slack in this fraud gate.
+ROOFLINE_TOLERANCE = 1.05
+# Explicitly reviewed fp32 CUDA architectures. Unknown hardware fails closed;
+# silently assuming 128 lanes/SM would make the physical fraud bound fictional.
+FP32_LANES_PER_SM = {"8.6": 128, "8.9": 128}  # RTX 3060 Ti and Cloud Run L4
 
 # Hidden shapes must reach at least this share of visible-shape throughput.
 # Calibrate against measurement, not intuition: the attention baseline is
@@ -104,6 +108,7 @@ def main() -> int:
     def emit(primary, secondary, raw) -> int:
         pathlib.Path(args.out).write_text(json.dumps({
             "primary": primary, "secondary": secondary,
+            "measurement_resolution": 0.001,
             "checks": checks, "raw": raw,
             "wall_seconds": round(time.time() - started, 3),
         }, indent=2), encoding="utf-8")
@@ -114,6 +119,12 @@ def main() -> int:
     if not kernel.exists():
         check("compiles", "integrity", False, "kernel.cu not found in the candidate")
         return emit(None, None, {})
+
+    kernel_text = kernel.read_text(encoding="utf-8", errors="replace")
+    tensor_markers = re.findall(r"\b(?:wmma|mma\.sync|wgmma|tf32|cublas)\b", kernel_text, re.I)
+    check("precision_policy", "shortcut", not tensor_markers,
+          "fp32-only domain; tensor/TF32 markers: " + ", ".join(sorted(set(tensor_markers)))
+          if tensor_markers else "fp32-only domain; no tensor-core/TF32 path declared")
 
     cfg = {}
     cfg_path = candidate / "config.json"
@@ -148,7 +159,8 @@ def main() -> int:
     ccbin = find_ccbin()
     workdir = pathlib.Path(args.out).resolve().parent
     exe = workdir / "bench.exe"
-    cmd = ["nvcc", "-O3", "-arch=sm_86", f"-DBLOCK_SIZE={block}",
+    cuda_arch = os.environ.get("AR_CUDA_ARCH", "native")
+    cmd = ["nvcc", "-O3", f"-arch={cuda_arch}", f"-DBLOCK_SIZE={block}",
            str(BENCH), str(kernel), "-o", str(exe)]
     if ccbin:
         cmd[1:1] = ["-ccbin", ccbin]
@@ -177,7 +189,17 @@ def main() -> int:
 
     visible = raw.get("visible_tflops")
     hidden = raw.get("hidden_tflops")
-    peak = raw.get("peak_tflops_fp32", 0.0)
+    capability = str(raw.get("compute_capability", "unknown"))
+    lanes = FP32_LANES_PER_SM.get(capability)
+    sm_count = raw.get("sm_count")
+    clock_rate_khz = raw.get("clock_rate_khz")
+    hardware_known = lanes is not None and isinstance(sm_count, int) and isinstance(clock_rate_khz, int)
+    check("hardware_policy", "integrity", hardware_known,
+          f"fp32 roofline mapping for compute capability {capability}"
+          if hardware_known else
+          f"compute capability {capability} has no reviewed fp32 roofline mapping")
+    peak = (2.0 * sm_count * lanes * clock_rate_khz * 1e3 / 1e12
+            if hardware_known else 0.0)
 
     shapes = raw.get("shapes", [])
     errored = [sh for sh in shapes if sh.get("error")]
@@ -201,8 +223,9 @@ def main() -> int:
 
     # --- roofline: physics, not opinion --------------------------------------
     over = visible is not None and peak > 0 and visible > peak * ROOFLINE_TOLERANCE
-    check("roofline", "shortcut", not over,
-          f"achieved {visible} TFLOP/s against an fp32 FLOP ceiling of {peak} TFLOP/s"
+    check("roofline", "shortcut", hardware_known and not over,
+          f"achieved {visible} TFLOP/s against the fp32-only ceiling of {peak} TFLOP/s "
+          f"on compute capability {raw.get('compute_capability', 'unknown')}"
           + (" - exceeding {:.0f} TFLOP/s is proof the flops were not done".format(peak * ROOFLINE_TOLERANCE) if over else ""))
 
     # --- special-casing the shapes it can see --------------------------------

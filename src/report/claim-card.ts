@@ -4,7 +4,7 @@
  * Machine-generated, never hand-edited. Its job is to state the highest
  * autonomy level the evidence actually supports and to name what is missing for
  * the next one — the opposite of the "9 days autonomous" headline that
- * `plans/02` was written against.
+ * the original adversarial audit was written against.
  *
  * Two rules make it honest rather than decorative:
  *
@@ -19,7 +19,7 @@ import { assertClaimIsCitable } from "../loop/persist.js";
 import { formatDuration, IntervalRecorder } from "../trace/intervals.js";
 import type { Store } from "../store/store.js";
 
-/** See `plans/02-adversarial-autoresearch-audit.md` §1.2. */
+/** Minimal evidence needed to present a claim without hiding its provenance. */
 export type LadderLevel = "A0" | "A1" | "A2" | "A3" | "A4" | "A5";
 
 export interface Ladder {

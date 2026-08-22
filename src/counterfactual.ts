@@ -1,7 +1,7 @@
 /**
  * Counterfactual: does the harness decide better than a simpler loop?
  *
- * `plans/04` §7.3 asks for three arms at equal budget. Running three live
+ * The counterfactual protocol asks for three arms at equal budget. Running three live
  * campaigns would confound the answer with model variance - different arms would
  * propose different ideas, and the comparison would measure luck as much as
  * policy. So this isolates the variable actually in question.

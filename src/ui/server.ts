@@ -4,7 +4,7 @@
  * Read-only against the EVIDENCE, with exactly one narrow exception.
  *
  * SQLite is opened `readonly: true`, so nothing served here can alter a result,
- * a verdict, a threshold or the event log. `plans/03` §17.3 is explicit that an
+ * a verdict, a threshold or the event log. The trust boundary requires that an
  * observation surface must not become part of the control plane, and that still
  * holds for everything that decides what is true.
  *
@@ -23,7 +23,7 @@
  */
 
 import { createServer, type ServerResponse } from "node:http";
-import { existsSync, readFileSync, readdirSync, watch } from "node:fs";
+import { existsSync, readFileSync, watch } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
@@ -102,64 +102,9 @@ function readProvisionalTrace(idempotencyKey: string, kind: string): TimedTraceS
     try {
       return readFileSync(path, "utf8").split("\n").filter(Boolean)
         .map((line) => JSON.parse(line) as TimedTraceStep);
-    } catch { /* fall through to Pi's live session */ }
+    } catch { return []; }
   }
-
-  // Campaign processes started before incremental trace.jsonl support still
-  // have Pi's append-only session log. Project it into the same safe, truncated
-  // trace vocabulary. This is provisional UI data only; the sealed artifact
-  // remains the evidence source after completion.
-  const sessionDir = join(ROOT, ".autoresearch", "attempts", match[2]!, dir, "pi-session");
-  if (!existsSync(sessionDir)) return [];
-  try {
-    const files = readdirSync(sessionDir).filter((name) => name.endsWith(".jsonl")).sort();
-    const latest = files.at(-1);
-    if (!latest) return [];
-    const entries = readFileSync(join(sessionDir, latest), "utf8").split("\n").filter(Boolean)
-      .flatMap((line) => { try { return [JSON.parse(line) as any]; } catch { return []; } });
-    const firstAt = entries.map((entry) => Date.parse(entry.timestamp ?? ""))
-      .find((value) => Number.isFinite(value)) ?? Date.now();
-    const trace: TimedTraceStep[] = [];
-    const push = (entry: any, step: Omit<TimedTraceStep, "seq" | "atMs">) => {
-      const absolute = Date.parse(entry.timestamp ?? "");
-      trace.push({
-        seq: trace.length,
-        atMs: Number.isFinite(absolute) ? Math.max(0, absolute - firstAt) : 0,
-        ...step,
-        content: String(step.content ?? "").slice(0, 4000),
-      });
-    };
-    for (const entry of entries) {
-      if (entry.type !== "message") continue;
-      const message = entry.message ?? {};
-      if (message.role === "assistant" && Array.isArray(message.content)) {
-        for (const item of message.content) {
-          if (item?.type === "thinking" && item.thinking) {
-            push(entry, { kind: "thinking", content: item.thinking });
-          } else if (item?.type === "text" && item.text?.trim()) {
-            push(entry, { kind: "text", content: item.text });
-          } else if (item?.type === "toolCall") {
-            push(entry, {
-              kind: "tool_call", content: JSON.stringify(item.arguments ?? {}),
-              toolName: item.name, toolCallId: item.id,
-            });
-          }
-        }
-      } else if (message.role === "toolResult") {
-        const content = Array.isArray(message.content)
-          ? message.content.filter((item: any) => item?.type === "text").map((item: any) => item.text).join("")
-          : String(message.content ?? "");
-        push(entry, {
-          kind: "tool_result", content, toolName: message.toolName,
-          toolCallId: message.toolCallId, isError: Boolean(message.isError),
-        });
-      }
-    }
-    return trace;
-  } catch {
-    // A writer may be between JSONL appends. A later poll will retry.
-    return [];
-  }
+  return [];
 }
 
 /**
@@ -389,7 +334,7 @@ function buildSummary(d: Database.Database) {
      FROM intervals WHERE campaign_id = ? AND resource_id = 'campaign' GROUP BY category`,
   ).all(CAMPAIGN) as Array<{ category: string; ms: number }>;
 
-  // The campaign recorder historically wrapped a whole Pi process in one
+  // The campaign recorder historically wrapped a whole worker process in one
   // `model_reasoning` interval. Subtract paired tool spans from that bucket so
   // shell commands and other tools are visible as their own costs. This is an
   // evidence-backed correction: every moved millisecond comes from timestamps
@@ -800,7 +745,7 @@ function scheduleLiveBroadcast(): void {
   }, 160);
 }
 
-// SQLite writes through WAL and active Pi workers append to session JSONL.
+// SQLite writes through WAL and active Genkit workers append bounded trace JSONL.
 // Watching the autoresearch directory captures both without making every open
 // dashboard repeatedly query the database. EventSource reconnects by itself;
 // the heartbeat below keeps intermediaries from considering the stream idle.

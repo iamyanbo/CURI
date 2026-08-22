@@ -294,6 +294,9 @@ export function createGenericAdapter(projectRoot: string, cfg: DomainConfig): Do
         ok: true,
         primary: typeof raw.primary === "number" ? raw.primary : null,
         secondary: typeof raw.secondary === "number" ? raw.secondary : null,
+        measurementResolution: typeof raw.measurement_resolution === "number"
+          && Number.isFinite(raw.measurement_resolution) && raw.measurement_resolution >= 0
+          ? raw.measurement_resolution : 0,
         checks: (raw.checks ?? []).map((c: any) => ({
           id: String(c.id), class: c.class ?? "integrity",
           passed: Boolean(c.passed), detail: String(c.detail ?? ""),

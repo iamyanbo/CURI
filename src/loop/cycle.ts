@@ -13,7 +13,6 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { Harness } from "../core/harness.js";
@@ -25,7 +24,8 @@ import {
 } from "./persist.js";
 import { canonicalJson, sha256, nowIso, type Lane, type Store } from "../store/store.js";
 import { IntervalRecorder } from "../trace/intervals.js";
-import { extractJson, runPiWorker, type WorkerUsage } from "../worker/pi-worker.js";
+import { runWorker } from "../worker/genkit-worker.js";
+import { extractJson, type WorkerUsage } from "../worker/types.js";
 import { consumeSteer, steerBlock } from "../steer.js";
 import { harvestCampaign, recordHarvest } from "../harvest.js";
 import { measuredFloor } from "./calibrate.js";
@@ -87,7 +87,7 @@ export interface CycleResult {
 const RESOURCE = "campaign";
 
 /**
- * Search tools, from the installed `pi-web-access` and `domain-search`
+ * Search tools implemented by the isolated Genkit worker.
  * extensions.
  *
  * Results are UNTRUSTED third-party text arriving inside a model's context -
@@ -97,19 +97,6 @@ const RESOURCE = "campaign";
  */
 const SEARCH_TOOLS = ["web_search", "arxiv_search", "code_search", "fetch_content"];
 
-/**
- * The extensions providing those tools, loaded by explicit path.
- *
- * Named individually rather than by turning extension discovery on: discovery
- * loaded every extension installed on the machine, one of which threw at
- * startup and hung a worker until timeout. A research run must depend on the
- * extensions it names, not on the machine's current install list.
- */
-const SEARCH_EXTENSIONS = [
-  join(homedir(), ".pi", "agent", "npm", "node_modules", "pi-web-access", "index.ts"),
-  join(homedir(), ".pi", "agent", "extensions", "domain-search", "index.ts"),
-];
-
 export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleResult> {
   const h = cfg.harness;
   const rec = new IntervalRecorder(store);
@@ -117,7 +104,6 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
   const started = Date.now();
   const attemptDir = join(cfg.projectRoot, ".autoresearch", "attempts", cycleId);
   mkdirSync(attemptDir, { recursive: true });
-  const isolatedHome = join(cfg.projectRoot, ".autoresearch", "worker-home");
   const artifactRoot = join(cfg.projectRoot, ".autoresearch", "artifacts");
   const lane: Lane = cfg.assignedLane ?? "mechanism";
   // Measured at campaign start by re-running the baseline; falls back to the
@@ -228,7 +214,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
         ].join("\n");
     const prompt = attempt === 1 ? managerPrompt : `${managerPrompt}\n${correction}`;
 
-    const managerRun = await runPiWorker({
+    const managerRun = await runWorker({
       role: "manager",
       prompt,
       cwd: attemptDir,
@@ -248,10 +234,9 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
       // none: the packet is its whole world, and literature reaches it through
       // the date-fenced watcher instead.
       tools: h.domain.agentSearch === false ? [] : SEARCH_TOOLS,
-      extensions: h.domain.agentSearch === false ? [] : SEARCH_EXTENSIONS,
       model: cfg.managerModel,
       timeoutMs: cfg.managerTimeoutMs,
-      isolatedHome,
+      structuredOutput: "manager-proposal",
     });
     usage.manager.inputTokens += managerRun.usage.inputTokens;
     usage.manager.outputTokens += managerRun.usage.outputTokens;
@@ -373,7 +358,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
   // and edited nothing - wasting a cycle silently. Aborts do not consume lane
   // budget, so a lane that keeps doing this walks the campaign into the
   // consecutive-abort cap instead of failing visibly.
-  let executorRun: Awaited<ReturnType<typeof runPiWorker>> | null = null;
+  let executorRun: Awaited<ReturnType<typeof runWorker>> | null = null;
   let executorAttemptId = "";
   let classification = h.classify(worktree);
 
@@ -398,7 +383,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
           "say so explicitly - do not stop silently.",
         ].join("\n");
 
-    executorRun = await runPiWorker({
+    executorRun = await runWorker({
       role: "executor",
       prompt,
       cwd: worktree,
@@ -409,10 +394,8 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
       tools: h.domain.agentSearch === false
         ? ["read", "write", "edit", "grep", "find", "ls", "bash"]
         : ["read", "write", "edit", "grep", "find", "ls", "bash", ...SEARCH_TOOLS],
-      extensions: h.domain.agentSearch === false ? [] : SEARCH_EXTENSIONS,
       model: cfg.executorModel,
       timeoutMs: cfg.executorTimeoutMs,
-      isolatedHome,
     });
     usage.executor.inputTokens += executorRun.usage.inputTokens;
     usage.executor.outputTokens += executorRun.usage.outputTokens;
@@ -569,6 +552,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     evaluationOk: evaluation.ok,
     primaryValue: evaluation.primary,
     baselineValue: cfg.baselinePrimary,
+    measurementResolution: evaluation.measurementResolution,
     allChecksPassed,
     failedChecks: failedChecks.map((c) => c.id),
     failedCheckClasses: failedChecks.map((c) => c.class),

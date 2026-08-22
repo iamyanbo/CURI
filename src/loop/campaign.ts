@@ -281,7 +281,7 @@ async function replicate(
 /**
  * Advance the campaign baseline onto a replicated result.
  *
- * This is the operation that lets a campaign compound. `plans/01` §5.1 removed
+ * This is the operation that lets a campaign compound. The design removed
  * winner-descend without replacing it, which left no way for a portfolio to
  * build on its own wins. The replacement is deliberately expensive: only a
  * replicated claim, whose diff still applies to the current base, may move it.
@@ -382,8 +382,53 @@ async function runReplications(
       inputHash: sha256(diffText),
     });
 
+    const pinnedBaseRevision = baseRevisionOf(store, cfg.campaignId);
+    let variantBaseline = cfg.baselinePrimary;
+    let variantBaselineFailure: string | null = null;
+
+    // Temporal windows are different measurement regimes, not interchangeable
+    // scalar values. Compare candidate and baseline on the SAME held-back
+    // window; using the default window's baseline for every fold can promote a
+    // candidate merely because one historical period has a higher raw Sharpe.
+    if (h.domain.replication.kind === "temporal_fold") {
+      const baselineId = `${id}-baseline`;
+      const baselineStaging = join(staging, "paired-baseline");
+      mkdirSync(baselineStaging, { recursive: true });
+      const builtBaseline = h.reproduce(
+        baselineId, pinnedBaseRevision, "", variant.configPatch,
+      );
+      if (!builtBaseline.worktree || builtBaseline.failure) {
+        variantBaselineFailure = builtBaseline.failure ?? "paired baseline worktree unavailable";
+      } else {
+        try {
+          const baselineExp = h.run(builtBaseline.worktree, baselineStaging, cfg.experimentTimeoutMs);
+          if (!baselineExp.ok || !baselineExp.outputPath) {
+            variantBaselineFailure = baselineExp.failureCode ?? "paired baseline experiment failed";
+          } else {
+            const baselineEval = h.evaluate({
+              worktree: builtBaseline.worktree,
+              outputPath: baselineExp.outputPath,
+              stagingDir: baselineStaging,
+              baselinePrimary: 0,
+              baselineSecondary: null,
+              supportDelta: 0,
+              timeoutMs: cfg.evaluatorTimeoutMs,
+            });
+            if (baselineEval.ok && baselineEval.primary !== null && Number.isFinite(baselineEval.primary)) {
+              variantBaseline = baselineEval.primary;
+              log(`    ${variant.label}: paired baseline ${variantBaseline.toFixed(6)}`);
+            } else {
+              variantBaselineFailure = baselineEval.failureCode ?? "paired baseline evaluation failed";
+            }
+          }
+        } finally {
+          h.discard(builtBaseline.worktree);
+        }
+      }
+    }
+
     const { worktree, failure } = h.reproduce(
-      id, baseRevisionOf(store, cfg.campaignId), diffText, variant.configPatch,
+      id, pinnedBaseRevision, diffText, variant.configPatch,
     );
 
     let ok = false;
@@ -393,7 +438,7 @@ async function runReplications(
       if (exp.ok && exp.outputPath) {
         const ev = h.evaluate({
           worktree, outputPath: exp.outputPath, stagingDir: staging,
-          baselinePrimary: cfg.baselinePrimary,
+          baselinePrimary: variantBaseline,
           baselineSecondary: cfg.baselineSecondary ?? null,
           supportDelta, timeoutMs: cfg.evaluatorTimeoutMs,
         });
@@ -413,8 +458,8 @@ async function runReplications(
           detail: failedLeak.map((c) => c.detail).join("; "),
         });
         const clean = ev.ok && ev.checks.every((c) => c.class === "leakage" || c.passed);
-        const better = value !== null && improvement(h, cfg.baselinePrimary, value) >= supportDelta;
-        ok = clean && better;
+        const better = value !== null && improvement(h, variantBaseline, value) >= supportDelta;
+        ok = variantBaselineFailure === null && clean && better;
       }
     }
 
@@ -428,8 +473,8 @@ async function runReplications(
       kind: "replication",
       polarity: ok ? "supports" : "weakens",
       statement: ok
-        ? `${variant.label} reproduced the effect (${value?.toFixed(6)})`
-        : `${variant.label} did not reproduce (${failure ?? `value ${value?.toFixed(6) ?? "n/a"}`})`,
+        ? `${variant.label} reproduced the effect (${value?.toFixed(6)} against paired baseline ${variantBaseline.toFixed(6)})`
+        : `${variant.label} did not reproduce (${variantBaselineFailure ?? failure ?? `value ${value?.toFixed(6) ?? "n/a"} against baseline ${variantBaseline.toFixed(6)}`})`,
       strengthRule: "replication.v2",
     });
 

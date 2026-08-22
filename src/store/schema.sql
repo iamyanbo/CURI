@@ -1,4 +1,4 @@
--- pi-autoresearch v0 canonical schema. See plans/04-v0-build-plan.md §2.
+-- Adversarial Autoresearch v0 local schema.
 -- 14 tables. Reduced from 03's 25 for the single-user local case.
 
 CREATE TABLE campaigns (

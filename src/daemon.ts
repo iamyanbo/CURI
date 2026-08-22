@@ -1,7 +1,7 @@
 /**
  * Detached campaign supervision — the minimum needed to leave a run overnight.
  *
- * This is NOT the fenced, epoch-managed daemon of `plans/03` §9. For one user on
+ * This is NOT a fenced, epoch-managed distributed daemon. For one user on
  * one machine that machinery defends against threats that do not exist. What an
  * overnight run actually needs is four things:
  *

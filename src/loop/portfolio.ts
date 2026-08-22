@@ -25,7 +25,7 @@ export { LANES };
 /**
  * Default allocation. `moonshot` exists because every other lane judges a
  * candidate against the baseline immediately, which discards any idea that must
- * get worse before it gets better — the exact greedy failure `plans/02` §F3
+ * get worse before it gets better — the greedy failure the audit identified
  * identifies in keep/revert loops. A moonshot is granted several cycles to
  * develop, and only its final step is judged for promotion.
  */

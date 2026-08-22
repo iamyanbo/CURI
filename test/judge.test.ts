@@ -169,14 +169,13 @@ describe("judge: an unchanged metric means different things per lane", () => {
   // worth keeping - and because invalids feed the consecutive-failure stop
   // condition, mislabelling them could halt a healthy campaign.
   //
-  // The distinguishing information is preserved in the reason code: the metric
-  // did not move at all, which is a stronger statement than moving less than
-  // the threshold.
+  // The distinguishing information is preserved without pretending rounded or
+  // timer-quantised output proves a physically exact zero effect.
   it("records an exactly unchanged result outside control as a retained null result", () => {
     const v = judge(goodRun({ primaryValue: 2.9, baselineValue: 2.9, laneExpectsChange: true }));
     assert.equal(v.status, "inconclusive", "a valid experiment that moved nothing is not broken");
-    assert.deepEqual(v.reasons, ["INTERVENTION_HAD_NO_EFFECT"],
-      "the reason must still distinguish 'no effect' from 'below threshold'");
+    assert.deepEqual(v.reasons, ["NO_MEASURABLE_EFFECT"],
+      "the reason must distinguish instrument resolution from an ordinary threshold miss");
     assert.ok(/null result/.test(v.explanation));
   });
 
@@ -189,6 +188,18 @@ describe("judge: an unchanged metric means different things per lane", () => {
   it("still calls a genuinely small change inconclusive", () => {
     const v = judge(goodRun({ primaryValue: 2.8995, baselineValue: 2.9, laneExpectsChange: true }));
     assert.equal(v.status, "inconclusive");
+  });
+
+  it("does not overclaim an exact no-op when the metric is timer-quantised", () => {
+    const v = judge(goodRun({
+      primaryValue: 2.9004,
+      baselineValue: 2.9,
+      measurementResolution: 0.001,
+      laneExpectsChange: true,
+    }));
+    assert.equal(v.status, "inconclusive");
+    assert.deepEqual(v.reasons, ["NO_MEASURABLE_EFFECT"]);
+    assert.match(v.explanation, /cannot distinguish zero effect/);
   });
 });
 

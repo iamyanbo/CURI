@@ -25,6 +25,7 @@ supplies a hard upper bound, so overclaiming is not a judgement call.
 
 import argparse
 import json
+import os
 import pathlib
 import re
 import shutil
@@ -92,6 +93,7 @@ def main() -> int:
     def emit(primary, secondary, raw) -> int:
         pathlib.Path(args.out).write_text(json.dumps({
             "primary": primary, "secondary": secondary,
+            "measurement_resolution": 0.001,
             "checks": checks, "raw": raw,
             "wall_seconds": round(time.time() - started, 3),
         }, indent=2), encoding="utf-8")
@@ -134,7 +136,8 @@ def main() -> int:
 
     workdir = pathlib.Path(args.out).parent
     exe = workdir / "bench.exe"
-    cmd = ["nvcc", "-O3", "-arch=sm_86", f"-DBLOCK_SIZE={block}",
+    cuda_arch = os.environ.get("AR_CUDA_ARCH", "native")
+    cmd = ["nvcc", "-O3", f"-arch={cuda_arch}", f"-DBLOCK_SIZE={block}",
            str(BENCH), str(kernel), "-o", str(exe)]
     if ccbin:
         cmd[1:1] = ["-ccbin", ccbin]

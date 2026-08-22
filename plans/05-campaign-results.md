@@ -53,7 +53,7 @@ ALiBi, the baseline advanced onto it, and the exploit lane then proposed sharpen
 recorded mechanism begins *"The replicated ALiBi improvement fixes each attention head's distance
 penalty to a geometric schedule…"*. Claims 3 and 4 opened a structurally independent direction
 (local n-gram convolution) alongside it. A winner-descending tree cannot hold two directions at once;
-this is what `plans/01` §3 bought.
+this is what the immutable-state design bought.
 
 ### 2.1 What this is not
 
@@ -82,7 +82,7 @@ Cheap gate admits, expensive gate confirms. The division of labour worked.
 ## 4. Honest accounting
 
 **73% of wall time was model reasoning; 14% was compute.** The long-horizon studies cited in
-`plans/02` report roughly the inverse (~90% compute). This campaign was **model-latency-bound**,
+the original audit reported roughly the inverse (~90% compute). This campaign was **model-latency-bound**,
 which means a stronger, slower manager costs cycles directly, and that training is nearly free at the
 margin — there is headroom for much longer experiments per cycle.
 
@@ -120,7 +120,7 @@ ALiBi, learnable slopes, convolutional stems, and a fixed-slope ablation to test
 accepted mechanism mattered. The failures were all in the harness.
 
 **None of the eight semantic defects would have been prevented by fencing tokens, leases, epochs, or
-process-tree ownership** — the machinery `plans/03` front-loads into M0. Defect 8 is the exception
+process-tree ownership** — machinery the original technical plan front-loaded into M0. Defect 8 is the exception
 that proves the rule: `03` specified a bounded, deterministic context packet, the unbounded version
 was built for speed, and it crashed the run. The spec was right there and skipping it was wrong.
 
@@ -145,7 +145,7 @@ rather than freezing them at design time.
 
 ## 6. Counterfactual status
 
-Not yet run. The three-arm comparison in `plans/04` §7.3 — keep/revert loop, harness with shortcut
+Not yet run. The planned three-arm comparison — keep/revert loop, harness with shortcut
 checks disabled, full harness — remains the outstanding validation. Until it is run, this campaign
 demonstrates that the harness **can** produce replicated compounding improvements; it does not
 establish that the harness is **better** than a simpler loop at equal budget.
