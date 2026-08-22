@@ -1,0 +1,5 @@
+{
+  "_comment": "Tunable surface. Editing only these keys classifies as `parameter`. The harness owns the input seed, the shape list, the rep count and the tolerance.",
+  "extra_nvcc_flags": "",
+  "block_size": 256
+}

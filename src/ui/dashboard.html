@@ -1,0 +1,1175 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autoresearch · Research operations</title>
+<style>
+/*
+  Full operations dashboard.
+
+  Rebuilt after I overwrote the original and deleted my own backup of it. This
+  restores what the original carried - live pipeline flow, the experiment tree
+  grouped by baseline revision, the agent trajectory stream, progress and
+  accounting graphs, failure breakdown - and adds the operator steer.
+
+  Typography is quieter than the original (one accent, one type scale, no
+  gradients or drop shadows), but density and interactivity are the point of an
+  operations view and are back in full: every node, row and card is clickable,
+  and selecting anything drives the decision and trajectory panels.
+*/
+:root{
+  --bg:#0d0f12; --panel:#131619; --panel-2:#171b20; --line:#22262c; --line-soft:#1a1d22;
+  --ink:#e9ecf0; --ink-2:#a7b0bb; --ink-3:#6d757f;
+  --live:#79a8ff; --good:#5fb583; --bad:#d9737f; --warn:#c99b52; --violet:#9d92c4;
+  --mono:"SFMono-Regular","Cascadia Code",Consolas,monospace;
+  --sans:Inter,ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.55 var(--sans);
+     -webkit-font-smoothing:antialiased}
+.wrap{max-width:1500px;margin:0 auto;padding:20px 22px 70px}
+h1{margin:0;font:600 16px/1 var(--sans);letter-spacing:-.01em}
+a{color:inherit}
+.label{font:10px var(--mono);letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3)}
+.panel{border:1px solid var(--line);background:var(--panel)}
+.phd{display:flex;align-items:center;gap:12px;padding:10px 13px;border-bottom:1px solid var(--line)}
+.phd .t{font-weight:600;font-size:12px}
+.phd .r{margin-left:auto;font:10px var(--mono);color:var(--ink-3)}
+.pb{padding:13px}
+.empty{color:var(--ink-3);font-size:12px;padding:14px 2px}
+.err{border-left:2px solid var(--bad);padding:9px 12px;color:var(--bad);font-size:12px}
+
+.top{display:flex;align-items:flex-start;gap:24px;flex-wrap:wrap;margin-bottom:16px}
+.run{font:11px var(--mono);color:var(--ink-3);margin-top:4px}
+.run b{color:var(--ink-2);font-weight:500}
+.state{margin-left:auto;display:flex;align-items:center;gap:8px;font:11px var(--mono);color:var(--ink-2)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink-3)}
+.dot.running{background:var(--live);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.3}}
+
+.strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));
+       border:1px solid var(--line);background:var(--panel);margin-bottom:14px}
+.cell{padding:11px 13px;border-right:1px solid var(--line-soft)}
+.cell:last-child{border-right:0}
+.cell .k{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.cell .v{font:600 17px var(--mono);font-variant-numeric:tabular-nums;margin-top:3px}
+.cell .s{font:10px var(--mono);color:var(--ink-3);margin-top:2px}
+.v.good{color:var(--good)} .v.bad{color:var(--bad)} .v.live{color:var(--live)}
+
+.flow{display:flex;align-items:stretch;overflow-x:auto;padding:4px 2px}
+.node{position:relative;min-width:132px;flex:1;border:1px solid var(--line);
+      background:var(--panel-2);padding:9px 11px;cursor:pointer}
+.node:hover{border-color:var(--ink-3)}
+.node.active{border-color:var(--live);box-shadow:inset 2px 0 0 var(--live)}
+.node.failed{border-color:var(--bad)}
+.node .k{font:9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.node .n{font-weight:600;font-size:12px;margin-top:4px}
+.node .d{font:10px var(--mono);color:var(--ink-2);margin-top:3px}
+.node.active .d{color:var(--live)}
+.arrow{align-self:center;color:var(--ink-3);padding:0 7px;font-size:12px;flex:none}
+.pulse{position:absolute;right:8px;top:9px;width:6px;height:6px;border-radius:50%;
+       background:var(--live);animation:pulse 1.4s ease-in-out infinite}
+
+/* ---- pipeline topology: a real node-link graph ---------------------------
+   Draggable nodes on an SVG edge layer, live-updating from /api/live. The
+   layout is the workflow itself - MANAGE through SEAL, with the worker's tool
+   and shell calls hanging off the executor and replay branching from
+   evaluation - so the shape on screen is the shape of the cycle.
+
+   Node positions persist in localStorage and the graph DOM is built ONCE:
+   the 4s refresh only mutates classes and text, because re-rendering would
+   snatch a node out from under a drag in progress. */
+.topo-wrap{position:relative;overflow:auto;background:
+  linear-gradient(var(--line-soft) 1px,transparent 1px) 0 0/22px 22px,
+  linear-gradient(90deg,var(--line-soft) 1px,transparent 1px) 0 0/22px 22px,var(--bg)}
+.topo{position:relative;width:1180px;height:250px;margin:8px auto}
+.edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.edge{stroke:var(--line);stroke-width:1.5;fill:none;marker-end:url(#ar)}
+.edge.hot{stroke:var(--live);stroke-width:2;marker-end:url(#arhot)}
+.edge.dim{stroke:var(--line-soft)}
+.mod{position:absolute;width:142px;border:1px solid var(--line);background:var(--panel-2);
+     padding:8px 10px;cursor:grab;user-select:none;touch-action:none}
+.mod:active{cursor:grabbing}
+.mod:hover{border-color:var(--ink-3)}
+.mod.active{border-color:var(--live);box-shadow:inset 2px 0 0 var(--live)}
+.mod.done{border-color:var(--line);opacity:.92}
+.mod.failed{border-color:var(--bad)}
+.mod.idle{opacity:.5}
+.mod .k{display:flex;align-items:center;gap:6px;font:9px var(--mono);letter-spacing:.1em;
+        text-transform:uppercase;color:var(--ink-3)}
+.mod .s{width:6px;height:6px;border-radius:50%;background:var(--ink-3);flex:none}
+.mod.active .s{background:var(--live);animation:pulse 1.4s ease-in-out infinite}
+.mod.done .s{background:var(--good)} .mod.failed .s{background:var(--bad)}
+.mod .n{font-weight:600;font-size:12px;margin-top:4px}
+.mod .d{font:10px var(--mono);color:var(--ink-2);margin-top:3px;white-space:nowrap;
+        overflow:hidden;text-overflow:ellipsis}
+.mod.active .d{color:var(--live)}
+.mod .badge{position:absolute;right:7px;bottom:-8px;background:var(--bg);color:var(--live);
+            border:1px solid var(--live);padding:0 4px;font:9px var(--mono);letter-spacing:.06em}
+
+/* Scrollbars in the page's own palette. The default chrome scrollbar is a
+   bright slab against a dark panel and was the loudest element on screen. */
+*{scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line);border:2px solid transparent;
+                          background-clip:padding-box;border-radius:6px}
+::-webkit-scrollbar-thumb:hover{background:var(--ink-3);background-clip:padding-box}
+::-webkit-scrollbar-corner{background:transparent}
+
+/* Chart tooltip: the native SVG <title> tooltip is an OS bubble in a system
+   font that ignores the theme and lags half a second behind the cursor. */
+#tip{position:fixed;z-index:60;pointer-events:none;opacity:0;transition:opacity .1s;
+     background:var(--panel);border:1px solid var(--line);padding:7px 9px;max-width:280px;
+     font:11px/1.5 var(--sans);color:var(--ink);box-shadow:0 4px 14px rgba(0,0,0,.4)}
+#tip .v{font:600 12px var(--mono);font-variant-numeric:tabular-nums;margin-top:3px}
+#tip .s{font:10px var(--mono);color:var(--ink-3);margin-top:2px}
+
+/* Active filter indicator */
+.filterbar{display:flex;align-items:center;gap:9px;padding:8px 13px;
+           border-bottom:1px solid var(--line);background:var(--panel-2);font-size:11px}
+.filterbar b{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--live)}
+
+/* Sources, grouped by where they came from. An agent-consulted URL and a scout
+   sweep are both leads, but knowing WHICH matters for provenance. */
+.srcgrp{margin-bottom:12px}
+.srchd{display:flex;align-items:baseline;gap:8px;padding:5px 0;
+       border-bottom:1px solid var(--line-soft);margin-bottom:4px}
+.srchd b{font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-2)}
+.srchd span{font:10px var(--mono);color:var(--ink-3);margin-left:auto}
+.srcrow{padding:4px 0;font-size:12px;line-height:1.45}
+.srcrow a{color:var(--ink-2);text-decoration:none}
+.srcrow a:hover{color:var(--live);text-decoration:underline}
+.srcrow .m{font:9px var(--mono);color:var(--ink-3)}
+
+/* Deterministic stages show their real output rather than an empty agent panel. */
+.chk{display:grid;grid-template-columns:7px minmax(0,1fr);gap:9px;padding:5px 0;font-size:12px}
+.chk i{width:6px;height:6px;border-radius:50%;margin-top:6px}
+.chk .n{font:10px var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2)}
+.chk .d{color:var(--ink-3);font:11px/1.5 var(--mono);margin-top:2px}
+.arts{font:10px var(--mono);color:var(--ink-3);padding:5px 0}
+.arts b{color:var(--ink-2);font-weight:500}
+.detnote{font:11px var(--mono);color:var(--ink-3);padding:6px 0 2px}
+
+/* ---- agent execution piano roll -----------------------------------------
+   One lane per stage, time running left to right, every span the harness
+   recorded drawn in place. The trajectory below says WHAT the agent did; this
+   says WHERE THE TIME WENT, which is a different and often more useful
+   question - a cycle that spent 55s reasoning and 2s searching looks nothing
+   like one that spent 5s reasoning and 90s in a shell.
+
+   Spans are clickable and drive the trajectory, so a suspicious block of time
+   is one click from the step that caused it. */
+.roll{position:relative;overflow-x:auto;padding:0 0 4px}
+.rollhd{display:flex;align-items:center;gap:10px;padding:8px 13px;
+        border-bottom:1px solid var(--line-soft);font:10px var(--mono);color:var(--ink-3)}
+.rollhd .sp{margin-left:auto}
+.ruler{position:relative;height:18px;margin-left:104px;border-bottom:1px solid var(--line-soft)}
+.ruler i{position:absolute;top:0;bottom:0;border-left:1px solid var(--line-soft)}
+.ruler span{position:absolute;top:3px;left:4px;font:9px var(--mono);color:var(--ink-3)}
+.lane{display:grid;grid-template-columns:104px minmax(360px,1fr);
+      border-bottom:1px solid var(--line-soft);min-height:30px}
+.lane:last-child{border-bottom:0}
+.lanename{padding:8px 10px;font:10px var(--mono);color:var(--ink-2);
+          border-right:1px solid var(--line-soft);white-space:nowrap;
+          text-transform:uppercase;letter-spacing:.06em}
+.lanetrack{position:relative;background-image:linear-gradient(to right,
+           var(--line-soft) 1px,transparent 1px);background-size:12.5% 100%}
+.span{position:absolute;top:6px;height:18px;min-width:3px;border-radius:2px;
+      cursor:pointer;overflow:hidden;padding:2px 5px;
+      font:9px var(--mono);color:#0b0f16;white-space:nowrap;opacity:.9}
+.span:hover{opacity:1;outline:1px solid var(--ink)}
+.span.sel{outline:2px solid var(--ink)}
+.rolllegend{display:flex;gap:12px;flex-wrap:wrap;padding:8px 13px;
+            font:9px var(--mono);color:var(--ink-3)}
+.rolllegend span{display:flex;align-items:center;gap:5px}
+.playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--live);
+          z-index:3;pointer-events:none}
+
+/* Plain-language context. A status word and an id tell a reader what the system
+   decided and nothing about why, which makes the whole screen unreadable to
+   anyone who did not build it. */
+.why{font-size:11.5px;line-height:1.5;color:var(--ink-2);margin-top:5px}
+.exp .why{font-size:10.5px;color:var(--ink-3);margin-top:3px;
+          display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.gloss{font-size:11px;color:var(--ink-3);line-height:1.5;margin-top:2px}
+.dwhy{padding:11px 14px;border-bottom:1px solid var(--line);background:var(--panel-2)}
+.dwhy .k{font:9px var(--mono);letter-spacing:.09em;text-transform:uppercase;
+         color:var(--ink-3);display:block;margin-bottom:4px}
+.lanerow{padding:9px 0;border-bottom:1px solid var(--line-soft)}
+.lanerow:last-child{border-bottom:0}
+.lanetop{display:flex;align-items:baseline;gap:8px}
+.lanetop b{font:11px var(--mono);color:var(--ink);text-transform:uppercase;letter-spacing:.05em}
+.lanetop span{margin-left:auto;font:10px var(--mono);color:var(--ink-3)}
+.lanebar{height:3px;background:var(--line-soft);margin-top:5px}
+.lanebar i{display:block;height:100%;background:var(--live)}
+
+.grid3{display:grid;grid-template-columns:330px minmax(0,1fr) 300px;gap:14px;
+       align-items:start;margin-top:14px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-top:14px}
+@media(max-width:1300px){.grid3{grid-template-columns:300px minmax(0,1fr)}.col3{grid-column:1/-1}}
+@media(max-width:900px){.grid3,.grid2{grid-template-columns:1fr}}
+
+.tree{max-height:640px;overflow:auto;padding:6px}
+.rev{display:flex;justify-content:space-between;padding:9px 8px 5px;
+     font:10px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3);
+     border-top:1px solid var(--line-soft);margin-top:5px}
+.rev:first-child{border-top:0;margin-top:0}
+.rev b{color:var(--good);font-weight:600}
+.exp{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:9px;
+     padding:7px 8px;cursor:pointer;border:1px solid transparent}
+.exp:hover{background:var(--panel-2)}
+.exp.sel{background:var(--panel-2);border-color:var(--line);box-shadow:inset 2px 0 0 var(--live)}
+.exp i{width:7px;height:7px;border-radius:50%;margin-top:5px}
+.exp .t{font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.exp .m{font:10px var(--mono);color:var(--ink-3);margin-top:2px;display:flex;gap:8px}
+.exp .v{font:11px var(--mono);color:var(--ink-2);white-space:nowrap}
+.cheat{color:var(--bad);border:1px solid var(--bad);padding:0 3px;font-size:9px}
+
+.traj{max-height:640px;overflow:auto;padding:10px 13px}
+.shd{display:flex;gap:10px;align-items:baseline;margin:14px 0 7px;padding-bottom:6px;
+     border-bottom:1px solid var(--line-soft)}
+.shd:first-child{margin-top:0}
+.shd .k{font:10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
+.shd .meta{margin-left:auto;font:10px var(--mono);color:var(--ink-3)}
+.step{border-left:1px solid var(--line);padding:6px 0 6px 13px;margin-left:3px;position:relative}
+.step:before{content:"";position:absolute;left:-3.5px;top:12px;width:6px;height:6px;
+             border-radius:50%;background:var(--ink-3)}
+.step.thinking:before{background:var(--live)}
+.step.tool_call:before{background:var(--warn)}
+.step.tool_result:before{background:var(--good)}
+.step.text:before{background:var(--ink)}
+.step .lbl{font:9px var(--mono);letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+.step .body{white-space:pre-wrap;word-break:break-word;margin-top:3px;
+            font:11px/1.6 var(--mono);color:var(--ink-2);max-height:240px;overflow:auto}
+.step.thinking .body{font-style:italic;color:var(--ink-3)}
+.step.text .body{color:var(--ink)}
+
+.dtop{padding:12px 14px;border-bottom:1px solid var(--line)}
+.dtitle{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.dmeta{display:flex;gap:9px;flex-wrap:wrap;margin-top:6px;font:10px var(--mono);color:var(--ink-3)}
+.chip{border:1px solid var(--line);padding:1px 6px;text-transform:uppercase;letter-spacing:.04em}
+.dgrid{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--line)}
+.dg{padding:9px 11px;border-right:1px solid var(--line-soft)}
+.dg:last-child{border-right:0}
+.dg .k{font:9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.dg .v{font:600 13px var(--mono);margin-top:3px;font-variant-numeric:tabular-nums}
+.evline{display:grid;grid-template-columns:7px minmax(0,1fr);gap:9px;padding:5px 0;
+        font-size:12px;color:var(--ink-2)}
+.evline i{width:6px;height:6px;border-radius:50%;margin-top:6px}
+
+svg.chart{width:100%;height:190px;display:block;overflow:visible}
+.chart .grid{stroke:var(--line-soft)} .chart .line{fill:none;stroke:var(--live);stroke-width:2}
+.chart .pt{fill:var(--bg);stroke:var(--live);stroke-width:2}
+.chart .roof{stroke:var(--bad);stroke-dasharray:3 4}
+.chart text{font:9px var(--mono);fill:var(--ink-3)}
+.bar{height:9px;display:flex;overflow:hidden;background:var(--line-soft);margin:3px 0 11px}
+.bar i{display:block;height:100%}
+.legend{display:flex;gap:13px;flex-wrap:wrap;font:10px var(--mono);color:var(--ink-3)}
+.legend span{display:flex;align-items:center;gap:5px}
+.sw{width:8px;height:8px;display:inline-block}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:1px;background:var(--line-soft)}
+.card{background:var(--panel);padding:11px 13px;cursor:pointer}
+.card:hover{background:var(--panel-2)}
+.card.sel{background:var(--panel-2);box-shadow:inset 0 2px 0 var(--live)}
+.card b{display:block;font:500 20px var(--mono);font-variant-numeric:tabular-nums}
+.card span{font:10px var(--mono);color:var(--ink-3)}
+
+textarea{width:100%;min-height:58px;resize:vertical;background:var(--panel-2);color:var(--ink);
+         border:1px solid var(--line);padding:9px 11px;font:12px/1.5 var(--sans);outline:none}
+textarea:focus{border-color:var(--live)}
+button{background:transparent;border:1px solid var(--line);color:var(--ink-2);
+       padding:8px 13px;font:11px var(--sans);cursor:pointer}
+button:hover{border-color:var(--ink-3);color:var(--ink)}
+button.go{border-color:var(--live);color:var(--live)}
+button:disabled{opacity:.4;cursor:default}
+.pending{border-left:2px solid var(--warn);padding:8px 11px;margin-bottom:10px;
+         background:var(--panel-2);font-size:12px}
+.pending .k{font:9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--warn);
+            display:block;margin-bottom:3px}
+.rows{max-height:250px;overflow:auto}
+.row{padding:8px 0;border-top:1px solid var(--line-soft);font-size:12px}
+.row:first-child{border-top:0}
+.row .m{font:10px var(--mono);color:var(--ink-3);margin-top:2px}
+table{width:100%;border-collapse:collapse;font:11px var(--mono)}
+th,td{padding:5px 4px;border-bottom:1px solid var(--line-soft);text-align:left}
+th{font-size:9px;letter-spacing:.07em;text-transform:uppercase;color:var(--ink-3)}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+</style>
+
+<div id="tip"></div>
+<div class="wrap">
+  <div class="top">
+    <div><h1>Autoresearch</h1><div class="run" id="run">loading…</div></div>
+    <div class="state"><span class="dot" id="dot"></span><span id="stateTxt">—</span><button id="followbtn">follow live</button><button id="stopbtn" title="Honoured at the next cycle boundary, so a cycle in flight is never abandoned half-finished">Stop</button></div>
+  </div>
+
+  <div class="strip" id="strip"></div>
+
+  <div class="panel">
+    <div class="phd"><span class="t">Pipeline</span>
+      <span class="label" id="flowCycle"></span>
+      <span class="r" id="flowStep"></span></div>
+    <div class="topo-wrap"><div class="topo" id="topo">
+      <svg class="edges" id="edges">
+        <defs>
+          <marker id="ar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L8 4 L0 8 z" fill="#22262c"/></marker>
+          <marker id="arhot" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L8 4 L0 8 z" fill="#79a8ff"/></marker>
+        </defs>
+      </svg>
+    </div></div>
+    <div class="pb" style="padding-top:0"><button id="relayout">Reset layout</button></div>
+  </div>
+
+  <div class="grid3">
+    <div class="panel">
+      <div class="phd"><span class="t">Experiments</span><span class="r" id="expCount"></span></div>
+      <div id="filterbar"></div>
+      <div class="tree" id="tree"></div>
+    </div>
+
+    <div style="display:grid;gap:14px;min-width:0">
+      <div class="panel" id="decision"></div>
+      <div class="panel">
+        <div class="phd"><span class="t">Execution piano roll</span>
+          <span class="r" id="rollMeta"></span></div>
+        <div class="rollhd" id="rollhd"></div>
+        <div class="roll" id="roll"></div>
+        <div class="rolllegend" id="rolllegend"></div>
+      </div>
+
+      <div class="panel">
+        <div class="phd"><span class="t">Trajectory</span><span class="r" id="trajMeta"></span></div>
+        <div class="traj" id="traj"><div class="empty">Select an experiment to see the agent's work.</div></div>
+      </div>
+    </div>
+
+    <div class="col3" style="display:grid;gap:14px;min-width:0">
+      <div class="panel">
+        <div class="phd"><span class="t">Steer</span></div>
+        <div class="pb">
+          <div id="pending"></div>
+          <textarea id="steertext" placeholder="What should the manager try next? Applied at the next cycle boundary and recorded as an intervention. It cannot change a threshold."></textarea>
+          <div style="margin-top:8px"><button class="go" id="send">Queue steer</button></div>
+          <div class="row" style="border:0;padding-top:8px" id="steernote"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="phd"><span class="t">Lane budget</span></div>
+        <div class="pb" id="lanes"></div>
+      </div>
+      <div class="panel">
+        <div class="phd"><span class="t">Where time goes</span><span class="r">trace-exclusive</span></div>
+        <div class="pb"><div class="bar" id="timebar"></div><div class="legend" id="timelegend"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <div class="phd"><span class="t">Progress</span><span class="r" id="progNote"></span></div>
+    <div class="pb"><svg class="chart" id="chart"></svg>
+      <div class="legend" style="margin-top:9px">
+        <span><i class="sw" style="background:var(--good)"></i>replicated</span>
+        <span><i class="sw" style="background:var(--bad)"></i>refuted</span>
+        <span><i class="sw" style="background:var(--warn)"></i>invalid</span>
+        <span><i class="sw" style="background:var(--ink-3)"></i>inconclusive</span>
+        <span><i class="sw" style="background:var(--live)"></i>accepted baseline</span>
+        <span style="color:var(--ink-3)">hover a point for detail</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <div class="phd"><span class="t">Outcomes</span><span class="r">click to filter the tree</span></div>
+    <div class="cards" id="cards"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="panel">
+      <div class="phd"><span class="t">Event log</span></div>
+      <div class="pb"><div class="rows" id="events"></div></div>
+    </div>
+    <div style="display:grid;gap:14px;min-width:0">
+      <div class="panel">
+        <div class="phd"><span class="t">Operator interventions</span></div>
+        <div class="pb"><div class="rows" id="interventions"></div></div>
+      </div>
+      <div class="panel">
+        <div class="phd"><span class="t">Sources</span>
+          <span class="r"><span id="srcCount"></span> · untrusted</span></div>
+        <div class="pb"><div id="sources" style="max-height:340px;overflow:auto"></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const n2 = (v, d = 2) => (typeof v === "number" ? v.toFixed(d) : "—");
+const dur = (v) => {
+  if (!v || v < 0) return "—";
+  const h = Math.floor(v / 3600000), m = Math.floor((v % 3600000) / 60000);
+  return h > 0 ? h + "h " + String(m).padStart(2, "0") + "m" : m + "m";
+};
+const ms = (v) => (!v ? "—" : v < 1000 ? v + "ms" : (v / 1000).toFixed(1) + "s");
+
+const COLOUR = {
+  replicated: "var(--good)", provisionally_supported: "var(--live)",
+  refuted: "var(--bad)", shortcut_suspected: "var(--bad)",
+  implementation_invalid: "var(--warn)", inconclusive: "var(--ink-3)",
+  tested: "var(--violet)", proposed: "var(--ink-3)",
+};
+
+// What each lane is FOR. The allocator's job is not obvious from a lane name,
+// and the whole portfolio design is pointless if a reader cannot see why a
+// cycle was spent on something that looks unproductive.
+const LANE_HELP = {
+  control: "Re-runs the current baseline unchanged. Catches the measurement drifting; a control that finds nothing is the control working.",
+  exploit: "Pushes further on the direction that is already winning. The only lane a free-choosing model would ever pick.",
+  mechanism: "Structural changes to how the thing works. Where the real gains have come from.",
+  falsify: "Attacks a claim the campaign has already accepted, usually by removing it. A failed attack is the strongest evidence a result is real - and nobody volunteers to disprove their own win, which is why this lane has a floor no other lane may spend.",
+  moonshot: "An idea that must get worse before it gets better. Every other lane judges against the baseline immediately and would kill it at step one, so a moonshot gets several cycles and only its last step is judged.",
+};
+
+// What each verdict MEANS, in a sentence.
+const STATUS_HELP = {
+  replicated: "Survived re-measurement across several independent repetitions and beat its pre-registered threshold. This is the only status that can move the baseline.",
+  provisionally_supported: "Beat its threshold once. Not yet re-measured, so not yet a finding.",
+  refuted: "Moved the metric the wrong way by more than the pre-registered refutation threshold. A real result, kept.",
+  inconclusive: "The change was too small to tell apart from measurement noise. Not a failure - an honest null result.",
+  implementation_invalid: "The experiment could not be run or measured: it did not build, broke a rule, or produced nothing. Says nothing about the idea.",
+  shortcut_suspected: "A protected check caught the candidate obtaining its number without doing the work.",
+  tested: "An intermediate step of a multi-step idea. Recorded, but a step before the last cannot decide anything.",
+  proposed: "Registered but never measured.",
+};
+
+function laneHelp(l) { return LANE_HELP[l] || ""; }
+function statusHelp(st) { return STATUS_HELP[st] || ""; }
+
+const FLOW = ["manager", "executor", "tools", "shell", "compute", "evaluation"];
+
+let selected = null;
+let filter = null;
+let followLive = true;
+let cache = {};
+
+async function get(p) {
+  const r = await fetch(p);
+  if (!r.ok) throw new Error(p + " -> " + r.status);
+  return r.json();
+}
+
+// ---- pipeline topology: node-link graph, draggable, live ------------------
+//
+// The eight cycle steps are the spine (MANAGE -> SEAL). `tools` and `shell`
+// branch off the executor because they are what the worker does inside its own
+// step, and `replay` branches off evaluation because replication is a
+// cross-cycle decision the driver makes, not a stage of one cycle.
+const TOPO_NODES = [
+  { id: "manager",    label: "Manager",   step: 1, x: 20,   y: 20,  kind: "worker" },
+  { id: "contract",   label: "Contract",  step: 2, x: 190,  y: 20,  kind: "registered" },
+  { id: "executor",   label: "Executor",  step: 3, x: 360,  y: 20,  kind: "worker" },
+  { id: "shell",      label: "Shell",     step: 3, x: 190,  y: 148, kind: "worker" },
+  { id: "tools",      label: "Tools",     step: 3, x: 360,  y: 148, kind: "worker" },
+  { id: "classify",   label: "Classify",  step: 4, x: 530,  y: 20,  kind: "diff" },
+  { id: "compute",    label: "Compute",   step: 5, x: 700,  y: 20,  kind: "experiment" },
+  { id: "evaluation", label: "Evaluator", step: 6, x: 870,  y: 20,  kind: "protected" },
+  { id: "replay",     label: "Replay",    step: 6, x: 870,  y: 148, kind: "replication" },
+  { id: "judge",      label: "Judge",     step: 7, x: 1020, y: 148, kind: "pure fn" },
+  { id: "seal",       label: "Seal",      step: 8, x: 1020, y: 20,  kind: "evidence" },
+];
+
+const TOPO_EDGES = [
+  ["manager", "contract"], ["contract", "executor"], ["executor", "tools"],
+  ["tools", "shell"], ["executor", "classify"], ["classify", "compute"],
+  ["compute", "evaluation"], ["evaluation", "replay"], ["evaluation", "seal"],
+  ["replay", "judge"], ["judge", "seal"],
+];
+
+const POS_KEY = "autoresearch.topo.v1";
+let topoBuilt = false;
+let topoPos = {};
+
+function loadPos() {
+  try { topoPos = JSON.parse(localStorage.getItem(POS_KEY) || "{}"); } catch (e) { topoPos = {}; }
+}
+function savePos() {
+  try { localStorage.setItem(POS_KEY, JSON.stringify(topoPos)); } catch (e) { /* private mode */ }
+}
+
+// Built ONCE. The 4s refresh only mutates classes and text: re-rendering the
+// graph would snatch a node out from under a drag in progress and reset any
+// layout the operator had arranged.
+function buildTopology() {
+  const host = document.getElementById("topo");
+  loadPos();
+  for (const n of TOPO_NODES) {
+    const p = topoPos[n.id] || { x: n.x, y: n.y };
+    const el = document.createElement("div");
+    el.className = "mod idle";
+    el.id = "mod-" + n.id;
+    el.style.left = p.x + "px";
+    el.style.top = p.y + "px";
+    el.innerHTML = '<div class="k"><span class="s"></span>' + esc(n.kind) + "</div>"
+      + '<div class="n">' + esc(n.label) + "</div>"
+      + '<div class="d" id="modd-' + n.id + '">waiting</div>';
+    host.appendChild(el);
+    makeDraggable(el, n.id);
+    el.addEventListener("click", function (ev) {
+      if (el.dataset.dragged === "1") { el.dataset.dragged = "0"; return; }
+      ev.stopPropagation();
+      // Clicking a node in the LIVE pipeline means 'show me this, as it runs',
+      // so it re-attaches to the live cycle rather than pinning the selection.
+      if (cache.live && cache.live.hypothesisId) {
+        followLive = true;
+        select(cache.live.hypothesisId, n.id, false);
+      }
+    });
+  }
+  const svg = document.getElementById("edges");
+  for (const pair of TOPO_EDGES) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("class", "edge");
+    path.id = "edge-" + pair[0] + "-" + pair[1];
+    svg.appendChild(path);
+  }
+  topoBuilt = true;
+  drawEdges();
+}
+
+function makeDraggable(el, id) {
+  let sx = 0, sy = 0, ox = 0, oy = 0, moved = false;
+  el.addEventListener("pointerdown", function (e) {
+    el.setPointerCapture(e.pointerId);
+    sx = e.clientX; sy = e.clientY;
+    ox = parseFloat(el.style.left); oy = parseFloat(el.style.top);
+    moved = false;
+  });
+  el.addEventListener("pointermove", function (e) {
+    if (!el.hasPointerCapture(e.pointerId)) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+    el.style.left = Math.max(0, ox + dx) + "px";
+    el.style.top = Math.max(0, oy + dy) + "px";
+    drawEdges();
+  });
+  el.addEventListener("pointerup", function (e) {
+    el.releasePointerCapture(e.pointerId);
+    if (moved) {
+      el.dataset.dragged = "1";
+      topoPos[id] = { x: parseFloat(el.style.left), y: parseFloat(el.style.top) };
+      savePos();
+    }
+  });
+}
+
+// Edges leave the source's right or bottom face and enter the target's left or
+// top face, curved through a midpoint. Straight centre-to-centre lines cut
+// through unrelated boxes and stop reading as flow.
+function drawEdges() {
+  for (const pair of TOPO_EDGES) {
+    const ea = document.getElementById("mod-" + pair[0]);
+    const eb = document.getElementById("mod-" + pair[1]);
+    const path = document.getElementById("edge-" + pair[0] + "-" + pair[1]);
+    if (!ea || !eb || !path) continue;
+    const ax = parseFloat(ea.style.left), ay = parseFloat(ea.style.top);
+    const bx = parseFloat(eb.style.left), by = parseFloat(eb.style.top);
+    const aw = ea.offsetWidth, ah = ea.offsetHeight;
+    const bw = eb.offsetWidth, bh = eb.offsetHeight;
+    let d;
+    if (Math.abs(by - ay) < 40) {
+      const x1 = ax + aw, y1 = ay + ah / 2, x2 = bx - 5, y2 = by + bh / 2;
+      const mid = (x1 + x2) / 2;
+      d = "M" + x1 + " " + y1 + " C" + mid + " " + y1 + " " + mid + " " + y2
+        + " " + x2 + " " + y2;
+    } else {
+      const x1 = ax + aw / 2, y1 = ay + ah, x2 = bx + bw / 2, y2 = by - 5;
+      const mid = (y1 + y2) / 2;
+      d = "M" + x1 + " " + y1 + " C" + x1 + " " + mid + " " + x2 + " " + mid
+        + " " + x2 + " " + y2;
+    }
+    path.setAttribute("d", d);
+  }
+}
+
+function updateTopology(live) {
+  if (!topoBuilt) buildTopology();
+  const mods = live.modules || {};
+  const step = live.currentStep || 0;
+  document.getElementById("flowCycle").textContent =
+    live.hypothesisId ? "cycle " + live.hypothesisId : "";
+  document.getElementById("flowStep").textContent =
+    step ? "step " + step + " of " + (live.totalSteps || 9) : "idle";
+
+  for (const n of TOPO_NODES) {
+    const el = document.getElementById("mod-" + n.id);
+    const dd = document.getElementById("modd-" + n.id);
+    if (!el || !dd) continue;
+    const m = mods[n.id];
+    let cls = "mod ";
+    let text;
+    if (m) {
+      // Worker-backed nodes report real recorded state and duration.
+      cls += m.state === "active" ? "active"
+           : m.state === "failed" ? "failed"
+           : m.durationMs > 0 ? "done" : "idle";
+      text = m.state === "active" ? "running..."
+           : m.durationMs > 0 ? ms(m.durationMs) + " / " + (m.count || 0) + "x"
+           : "idle";
+    } else {
+      // Deterministic stages have no worker attempt to read, so their state is
+      // inferred from the step counter. Labelled honestly: this is the cycle's
+      // position, not a measured duration.
+      cls += step > n.step ? "done" : step === n.step ? "active" : "idle";
+      text = step > n.step ? "done" : step === n.step ? "running..." : "waiting";
+    }
+    el.className = cls;
+    dd.textContent = text;
+    const badge = el.querySelector(".badge");
+    if (cls.indexOf("active") >= 0 && !badge) {
+      const b = document.createElement("span");
+      b.className = "badge";
+      b.textContent = "RUNNING";
+      el.appendChild(b);
+    } else if (cls.indexOf("active") < 0 && badge) {
+      badge.remove();
+    }
+  }
+
+  for (const pair of TOPO_EDGES) {
+    const path = document.getElementById("edge-" + pair[0] + "-" + pair[1]);
+    if (!path) continue;
+    const na = TOPO_NODES.find(function (n) { return n.id === pair[0]; });
+    const nb = TOPO_NODES.find(function (n) { return n.id === pair[1]; });
+    const hot = step && na && nb && step >= na.step && step <= nb.step;
+    path.setAttribute("class", "edge" + (hot ? " hot" : step ? "" : " dim"));
+  }
+  drawEdges();
+}
+
+
+function showTip(e, d) {
+  const tip = document.getElementById("tip");
+  tip.innerHTML = '<div>' + esc(d.title || "") + '</div>'
+    + '<div class="v">' + esc(d.value || "") + '</div>'
+    + '<div class="s">' + esc(d.status || "") + (d.lane ? " / " + esc(d.lane) : "") + '</div>';
+  tip.style.opacity = "1";
+  moveTip(e);
+}
+function moveTip(e) {
+  const tip = document.getElementById("tip");
+  const pad = 14;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  const r = tip.getBoundingClientRect();
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - pad;
+  tip.style.left = x + "px";
+  tip.style.top = y + "px";
+}
+function hideTip() { document.getElementById("tip").style.opacity = "0"; }
+
+// Event delegation: the cards are replaced wholesale on every refresh, so a
+// handler bound to an individual card dies with it. Binding once to the
+// container survives re-render, which is why the filter appeared inert.
+function wireFilter() {
+  const host = document.getElementById("cards");
+  if (!host || host.dataset.wired === "1") return;
+  host.dataset.wired = "1";
+  host.addEventListener("click", (e) => {
+    const card = e.target.closest(".card");
+    if (!card) return;
+    filter = filter === card.dataset.k ? null : card.dataset.k;
+    refresh();
+  });
+}
+
+function renderFilterBar() {
+  const bar = document.getElementById("filterbar");
+  if (!bar) return;
+  bar.innerHTML = filter
+    ? '<b>filtered</b><span>' + esc(filter.replace(/_/g, " ")) + '</span>'
+      + '<button id="clearfilter" style="margin-left:auto;padding:3px 8px">Clear</button>'
+    : "";
+  bar.style.display = filter ? "flex" : "none";
+  const cf = document.getElementById("clearfilter");
+  if (cf) cf.onclick = () => { filter = null; refresh(); };
+}
+
+function renderTree(tree) {
+  const nodes = (tree.nodes ?? []).filter((n) => !filter || n.status === filter);
+  $("expCount").textContent = nodes.length + " shown";
+  const groups = new Map();
+  for (const n of nodes) {
+    const k = String(n.baseRevision ?? "unknown").slice(0, 8);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(n);
+  }
+  const trunkAt = new Map((tree.trunk ?? []).map((t) => [String(t.from).slice(0, 8), t]));
+  let html = "";
+  for (const [rev, list] of groups) {
+    const adv = trunkAt.get(rev);
+    html += '<div class="rev"><span>rev ' + esc(rev) + '</span>'
+          + (adv ? '<b>&rarr; ' + n2(adv.primary) + '</b>' : '<span>—</span>') + '</div>';
+    for (const n of list) {
+      html += '<div class="exp' + (selected === n.id ? " sel" : "") + '" data-id="' + esc(n.id) + '">'
+        + '<i style="background:' + (COLOUR[n.status] ?? "var(--ink-3)") + '"></i>'
+        + '<div><div class="t">' + esc(n.title) + '</div><div class="m">'
+        + '<span title="' + esc(laneHelp(n.lane)) + '">' + esc(n.lane) + '</span>'
+        + '<span title="' + esc(statusHelp(n.status)) + '">' + esc(String(n.status).replace(/_/g, " ")) + '</span>'
+        + (n.cheat ? '<span class="cheat">cheat</span>' : "") + '</div>'
+        + (n.reason ? '<div class="why">' + esc(n.reason) + '</div>' : "") + '</div>'
+        + '<div class="v">' + (n.primary != null ? n2(n.primary) : "") + '</div></div>';
+    }
+  }
+  $("tree").innerHTML = html || '<div class="empty">no experiments match</div>';
+  document.querySelectorAll(".exp").forEach((el) => { el.onclick = () => select(el.dataset.id); });
+}
+
+function renderDecision(node) {
+  if (!node) { $("decision").innerHTML = '<div class="empty" style="padding:20px">No experiment selected.</div>'; return; }
+  const gain = (typeof node.primary === "number" && typeof node.baseline === "number")
+    ? node.primary - node.baseline : null;
+  $("decision").innerHTML =
+    '<div class="dtop"><div class="dtitle">' + esc(node.title) + '</div><div class="dmeta">'
+    + '<span class="chip" style="color:' + (COLOUR[node.status] ?? "var(--ink-3)") + '">'
+    + esc(String(node.status).replace(/_/g, " ")) + '</span>'
+    + '<span class="chip">' + esc(node.lane) + '</span>'
+    + '<span class="chip">' + esc(node.changeClass ?? "—") + '</span>'
+    + '<span>' + esc(node.id) + '</span>'
+    + '<span>rev ' + esc(String(node.baseRevision ?? "").slice(0, 8)) + '</span></div></div>'
+    + '<div class="dgrid">'
+    + '<div class="dg"><div class="k">measured</div><div class="v">' + n2(node.primary, 3) + '</div></div>'
+    + '<div class="dg"><div class="k">baseline</div><div class="v">' + n2(node.baseline, 3) + '</div></div>'
+    + '<div class="dg"><div class="k">holdout</div><div class="v">' + n2(node.holdout, 3) + '</div></div>'
+    + '<div class="dg"><div class="k">gain</div><div class="v" style="color:'
+    + (gain == null ? "" : gain > 0 ? "var(--good)" : "var(--bad)") + '">'
+    + (gain == null ? "—" : (gain > 0 ? "+" : "") + n2(gain, 3)) + '</div></div></div>'
+    + (node.reason
+        ? '<div class="dwhy"><span class="k">why this verdict</span>' + esc(node.reason) + '</div>'
+        : "")
+    + '<div class="dwhy" style="background:transparent"><span class="k">what '
+    + esc(String(node.status).replace(/_/g, " ")) + ' means</span>'
+    + '<div class="gloss">' + esc(statusHelp(node.status)) + '</div>'
+    + '<span class="k" style="margin-top:9px">why a ' + esc(node.lane) + ' cycle</span>'
+    + '<div class="gloss">' + esc(laneHelp(node.lane)) + '</div></div>'
+    + '<div class="pb" id="dev"></div>';
+  const ev = node.evidence ?? [];
+  $("dev").innerHTML = ev.length ? ev.map((e) => {
+    const col = e.polarity === "supports" ? "var(--good)"
+              : e.polarity === "refutes" ? "var(--bad)" : "var(--warn)";
+    return '<div class="evline"><i style="background:' + col + '"></i><div>'
+      + esc(e.statement ?? e) + '</div></div>';
+  }).join("") : '<div class="empty">no evidence recorded</div>';
+}
+
+// Trajectory rendering is INCREMENTAL.
+//
+// It used to rebuild the panel's innerHTML on every 4s poll. Three things went
+// wrong with that and all three were visible: the scroll position reset, the
+// DOM flickered as several hundred nodes were destroyed and recreated, and any
+// text selection was lost. A live trace only ever GROWS - steps are appended,
+// never rewritten - so the fix is to append the steps that are new and leave
+// the rest of the DOM alone.
+//
+// A full rebuild happens only when the selected cycle actually changes.
+let trajState = { id: null, seen: new Set(), stages: new Map() };
+
+function stepKey(stageId, t) {
+  return stageId + ":" + (t.seq ?? 0) + ":" + (t.kind ?? "");
+}
+
+function stepHtml(t, kind) {
+  const lbl = (t.kind === "tool_call" || t.kind === "tool_result")
+    ? String(t.kind).replace("_", " ") + (t.toolName ? " · " + t.toolName : "") : t.kind;
+  return '<div class="step ' + esc(t.kind) + '">'
+    + '<div class="lbl">' + esc(lbl) + (t.isError ? " · error" : "") + '</div>'
+    + '<div class="body">' + esc(String(t.content ?? "").slice(0, 4000)) + '</div></div>';
+}
+
+function stageHeaderHtml(st) {
+  return '<div class="shd" data-stage="' + esc(st.kind) + '"><span class="k">' + esc(st.kind) + '</span>'
+    + '<span style="color:' + (st.state === "failed" ? "var(--bad)" : "var(--ink-3)")
+    + ';font:10px var(--mono)">' + esc(st.state)
+    + (st.failureCode ? " · " + esc(st.failureCode) : "") + '</span>'
+    + '<span class="meta">'
+    + (st.isAgent === false
+        ? "deterministic · " + ms(st.durationMs)
+        : esc(st.model ?? "") + " · " + (st.tokens ?? 0) + " tok · " + ms(st.durationMs)
+          + " · " + esc(st.traceState ?? ""))
+    + '</span></div>';
+}
+
+function deterministicHtml(st) {
+  let html = "";
+  if ((st.checks ?? []).length) {
+    html += '<div class="detnote">The protected evaluator recomputed the metric'
+      + (st.measured != null ? " as <b>" + n2(st.measured, 3) + "</b>" : "")
+      + " and ran these checks:</div>";
+    for (const c of st.checks) {
+      html += '<div class="chk"><i style="background:'
+        + (c.passed ? "var(--good)" : "var(--bad)") + '"></i><div>'
+        + '<div class="n">' + esc(c.id) + " · " + esc(c.class)
+        + (c.passed ? "" : " · FAILED") + '</div>'
+        + '<div class="d">' + esc(c.detail) + '</div></div></div>';
+    }
+  } else {
+    html += '<div class="detnote">Deterministic stage - a subprocess, not an agent, '
+      + 'so there is no reasoning to show.</div>';
+  }
+  for (const a of st.artifacts ?? []) {
+    html += '<div class="arts">sealed <b>' + esc(a.kind) + '</b> · ' + a.byte_length + ' bytes</div>';
+  }
+  return html;
+}
+
+async function renderTrajectory(id, focusModule) {
+  const host = $("traj");
+  const fresh = trajState.id !== id;
+  if (fresh) {
+    host.innerHTML = '<div class="empty">loading…</div>';
+    trajState = { id, seen: new Set(), stages: new Map() };
+  }
+  try {
+    const c = await get("/api/cycle?id=" + encodeURIComponent(id));
+    const stages = c.stages ?? [];
+    $("trajMeta").textContent = c.timeline
+      ? ms(c.timeline.durationMs) + " · " + stages.length + " stages" : "";
+    if (!stages.length) {
+      if (fresh) host.innerHTML = '<div class="empty">no trace yet</div>';
+      renderRoll(c, cache.live);
+      return;
+    }
+    if (fresh) host.innerHTML = "";
+
+    for (const st of stages) {
+      const stageId = st.attemptId || (st.kind + ":" + st.runId);
+      let block = trajState.stages.get(stageId);
+      if (!block) {
+        // New stage: header plus a container its steps get appended into.
+        const wrap = document.createElement("div");
+        wrap.innerHTML = stageHeaderHtml(st) + '<div class="stagesteps"></div>';
+        host.appendChild(wrap);
+        block = { wrap, steps: wrap.querySelector(".stagesteps"), header: wrap.querySelector(".shd") };
+        trajState.stages.set(stageId, block);
+        if (st.isAgent === false) block.steps.innerHTML = deterministicHtml(st);
+      } else {
+        // Existing stage: only its header can change (state, duration, tokens).
+        const hd = block.header;
+        const fresh2 = document.createElement("div");
+        fresh2.innerHTML = stageHeaderHtml(st);
+        if (hd && fresh2.firstChild && hd.innerHTML !== fresh2.firstChild.innerHTML) {
+          hd.innerHTML = fresh2.firstChild.innerHTML;
+        }
+        if (st.isAgent === false && (st.checks ?? []).length
+            && !block.steps.dataset.filled) {
+          block.steps.innerHTML = deterministicHtml(st);
+          block.steps.dataset.filled = "1";
+        }
+      }
+      // Append only steps we have not drawn.
+      for (const t of st.trace ?? []) {
+        const k = stepKey(stageId, t);
+        if (trajState.seen.has(k)) continue;
+        trajState.seen.add(k);
+        const holder = document.createElement("div");
+        holder.innerHTML = stepHtml(t, st.kind);
+        if (holder.firstChild) block.steps.appendChild(holder.firstChild);
+      }
+    }
+    renderRoll(c, cache.live);
+    if (focusModule) focusStage(focusModule, false);
+  } catch (e) {
+    if (fresh) host.innerHTML = '<div class="err">' + esc(e.message) + "</div>";
+  }
+}
+
+function select(id, focusModule, pin = true) {
+  if (id !== selected) trajState = { id: null, seen: new Set(), stages: new Map() };
+  selected = id;
+  if (pin) followLive = false;
+  renderDecision((cache.tree?.nodes ?? []).find((n) => n.id === id));
+  renderTrajectory(id, focusModule);
+  document.querySelectorAll(".exp").forEach((el) =>
+    el.classList.toggle("sel", el.dataset.id === id));
+}
+
+function drawChart(measured, advances) {
+  const roof = null;
+  const svg = $("chart"), w = svg.clientWidth || 1000, h = 190;
+  const pad = { l: 50, r: 14, t: 14, b: 22 };
+  if (!measured.length && !advances.length) { svg.innerHTML = ""; return; }
+  const all = measured.map((m) => m.primary).concat(advances.map((a) => a.primary));
+  const lo = Math.min.apply(null, all) * 0.97;
+  const hi = Math.max.apply(null, all.concat(roof ? [roof] : [])) * 1.02;
+  const X = (i, len) => pad.l + (i / Math.max(1, len - 1)) * (w - pad.l - pad.r);
+  const Y = (v) => pad.t + (1 - (v - lo) / (hi - lo || 1)) * (h - pad.t - pad.b);
+  let out = "";
+  for (let g = 0; g <= 3; g++) {
+    const v = lo + (g / 3) * (hi - lo), y = Y(v);
+    out += '<line class="grid" x1="' + pad.l + '" y1="' + y + '" x2="' + (w - pad.r) + '" y2="' + y + '"/>'
+         + '<text x="4" y="' + (y + 3) + '">' + v.toFixed(0) + '</text>';
+  }
+  measured.forEach((m, i) => {
+    // Data travels on the element; the tooltip is drawn by us, not by the OS.
+    out += '<circle cx="' + X(i, measured.length) + '" cy="' + Y(m.primary) + '" r="3.5" fill="'
+      + (COLOUR[m.status] ?? "var(--ink-3)") + '" opacity=".82" style="cursor:pointer"'
+      + ' data-id="' + esc(m.id) + '" data-title="' + esc(m.title) + '"'
+      + ' data-status="' + esc(m.status) + '" data-value="' + n2(m.primary, 3)
+      + '" data-lane="' + esc(m.lane ?? "") + '"></circle>';
+  });
+  if (advances.length) {
+    out += '<path class="line" d="' + advances.map((a, i) =>
+      (i ? "L" : "M") + X(i, advances.length) + " " + Y(a.primary)).join(" ") + '"/>';
+    advances.forEach((a, i) => {
+      out += '<circle class="pt" cx="' + X(i, advances.length) + '" cy="' + Y(a.primary)
+        + '" r="4.5" data-title="' + esc(a.title) + '" data-status="accepted baseline"'
+        + ' data-value="' + n2(a.primary, 3) + '"></circle>';
+    });
+  }
+  svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+  svg.innerHTML = out;
+  svg.querySelectorAll("circle[data-title]").forEach((c) => {
+    if (c.dataset.id) c.onclick = () => select(c.dataset.id);
+    c.onmouseenter = (e) => showTip(e, c.dataset);
+    c.onmousemove = (e) => moveTip(e);
+    c.onmouseleave = hideTip;
+  });
+}
+
+async function refresh() {
+  try {
+    const [s, tree, progress, live] = await Promise.all([
+      get("/api/summary"), get("/api/tree"), get("/api/progress"),
+      get("/api/live").catch(() => ({ modules: {} })),
+    ]);
+    cache = { s, tree, progress, live };
+
+    $("run").innerHTML = "<b>" + esc(s.campaign) + "</b> · " + esc(s.model)
+      + " · rev " + esc(String(s.baseRevision ?? "").slice(0, 8));
+    $("stateTxt").textContent = s.status + (s.stopReason ? " (" + s.stopReason + ")" : "");
+    // Say plainly whether the view is tracking the running cycle, and make it
+    // one click to re-attach. A frozen view that looks live is worse than a
+    // stale one that admits it.
+    const fb = $("followbtn");
+    if (fb) {
+      const canFollow = Boolean(live.hypothesisId);
+      fb.textContent = followLive ? "following live" : "follow live";
+      fb.style.color = followLive ? "var(--live)" : "var(--ink-2)";
+      fb.style.borderColor = followLive ? "var(--live)" : "var(--line)";
+      fb.disabled = !canFollow;
+      fb.title = canFollow
+        ? (followLive ? "the trajectory and roll track the running cycle"
+                      : "click to track the running cycle again")
+        : "no cycle is running";
+    }
+    $("dot").className = "dot" + (s.status === "running" ? " running" : "");
+
+    const st = s.statuses ?? {};
+    const first = progress[0]?.baseline;
+    const gain = (typeof first === "number" && typeof s.baselinePrimary === "number")
+      ? s.baselinePrimary - first : null;
+    $("strip").innerHTML =
+      '<div class="cell"><div class="k">baseline</div><div class="v live">' + n2(s.baselinePrimary)
+      + '</div><div class="s">' + (gain != null ? "+" + n2(gain) + " total" : "") + '</div></div>'
+      + '<div class="cell"><div class="k">holdout</div><div class="v">' + n2(s.baselineSecondary)
+      + '</div><div class="s">hidden shapes</div></div>'
+      + '<div class="cell"><div class="k">replicated</div><div class="v good">' + (st.replicated ?? 0)
+      + '</div><div class="s">multi-seed</div></div>'
+      + '<div class="cell"><div class="k">refuted</div><div class="v bad">' + (st.refuted ?? 0)
+      + '</div><div class="s">negative, retained</div></div>'
+      + '<div class="cell"><div class="k">inconclusive</div><div class="v">' + (st.inconclusive ?? 0)
+      + '</div><div class="s">below threshold</div></div>'
+      + '<div class="cell"><div class="k">cost</div><div class="v">$' + n2(s.costUsd, 3)
+      + '</div><div class="s">' + (s.interventions ?? 0) + ' interventions</div></div>'
+      + '<div class="cell"><div class="k">elapsed</div><div class="v">' + dur(s.elapsedMs)
+      + '</div><div class="s">' + (st.replicated ?? 0) + ' validated so far</div></div>';
+
+    updateTopology(live);
+    renderTree(tree);
+
+    if (followLive && live.hypothesisId) {
+      // Follow the running cycle: re-read its trajectory every tick so the
+      // roll, the stages and the highlighted node all describe the same moment.
+      selected = live.hypothesisId;
+      renderDecision((tree.nodes ?? []).find((n) => n.id === selected));
+      renderTrajectory(selected, live.currentModule || undefined);
+    } else if (selected) {
+      renderDecision((tree.nodes ?? []).find((n) => n.id === selected));
+    }
+
+    const measured = (tree.nodes ?? []).filter((n) => typeof n.primary === "number")
+      .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+      .map((n) => ({ id: n.id, primary: n.primary, title: n.title, status: n.status, lane: n.lane }));
+    const adv = (tree.trunk ?? []).map((t) => ({
+      primary: t.primary,
+      title: ((tree.nodes ?? []).find((n) => n.id === t.hypothesisId) ?? {}).title ?? t.hypothesisId,
+    }));
+    drawChart(measured, typeof first === "number"
+      ? [{ primary: first, title: "starting baseline" }].concat(adv) : adv);
+    $("progNote").textContent = measured.length + " measured · " + adv.length + " accepted";
+
+    $("cards").innerHTML = ["replicated", "refuted", "inconclusive", "implementation_invalid", "shortcut_suspected"]
+      .map((k) => '<div class="card' + (filter === k ? " sel" : "") + '" data-k="' + k + '"'
+        + ' title="' + esc(statusHelp(k)) + '">'
+        + '<b style="color:' + COLOUR[k] + '">' + (st[k] ?? 0) + '</b>'
+        + '<span>' + k.replace(/_/g, " ") + '</span></div>').join("");
+    wireFilter();
+    renderFilterBar();
+
+    // Lanes with their purpose. "control 25/20" means nothing on its own; the
+    // reason the allocator insists on serving each one is the entire argument
+    // for not letting the model choose what to work on.
+    $("lanes").innerHTML = (s.lanes ?? []).map((l) => {
+      const pctUsed = l.allocated > 0 ? Math.min(100, (l.consumed / l.allocated) * 100) : 0;
+      return '<div class="lanerow"><div class="lanetop"><b>' + esc(l.lane) + '</b>'
+        + '<span>' + l.consumed + ' of ' + l.allocated + ' cycles</span></div>'
+        + '<div class="lanebar"><i style="width:' + pctUsed + '%"></i></div>'
+        + '<div class="gloss">' + esc(laneHelp(l.lane)) + '</div></div>';
+    }).join("") || '<div class="empty">no lane budgets</div>';
+
+    const tot = (s.intervals ?? []).reduce((a, b) => a + Number(b.ms || 0), 0) || 1;
+    const tcol = { model_reasoning: "var(--live)", tool_execution: "var(--warn)",
+                   compute: "var(--violet)", evaluation: "var(--good)",
+                   supervisor: "var(--ink-3)", unknown: "var(--line)" };
+    $("timebar").innerHTML = (s.intervals ?? []).map((i) =>
+      '<i style="width:' + ((i.ms / tot) * 100) + '%;background:' + (tcol[i.category] ?? "var(--line)") + '"></i>').join("");
+    $("timelegend").innerHTML = (s.intervals ?? []).map((i) =>
+      '<span><i class="sw" style="background:' + (tcol[i.category] ?? "var(--line)") + '"></i>'
+      + esc(i.category) + " " + ((i.ms / tot) * 100).toFixed(0) + "%</span>").join("");
+
+    $("pending").innerHTML = s.pendingSteer
+      ? '<div class="pending"><span class="k">queued for the next cycle</span>'
+        + esc(s.pendingSteer.text)
+        + '<div style="margin-top:7px"><button id="clear">Withdraw</button></div></div>' : "";
+    if ($("clear")) $("clear").onclick = async () => {
+      await fetch("/api/steer", { method: "DELETE" }); refresh();
+    };
+
+    const events = await get("/api/trace").catch(() => []);
+    $("events").innerHTML = events.slice(0, 18).map((e) =>
+      '<div class="row">' + esc(e.type) + '<div class="m">' + esc(e.actor) + ' · '
+      + esc(String(e.at).slice(11, 19)) + ' · ' + esc(e.subject) + '</div></div>').join("")
+      || '<div class="empty">no events</div>';
+
+    $("interventions").innerHTML = (s.recentInterventions ?? []).map((i) =>
+      '<div class="row">' + esc(i.detail) + '<div class="m">' + esc(i.kind) + ' · '
+      + esc(String(i.occurred_at).slice(0, 19).replace("T", " ")) + '</div></div>').join("")
+      || '<div class="empty">none recorded</div>';
+
+    const src = await get("/api/sources").catch(() => ({ total: 0, groups: [] }));
+    $("srcCount").textContent = src.total + " total";
+    $("sources").innerHTML = (src.groups ?? []).map((g) => {
+      // `agent:manager` means a subagent read this during a cycle; the rest are
+      // scout sweeps. Both are leads; the label says which.
+      const who = g.provider.startsWith("agent:")
+        ? g.provider.replace("agent:", "") + " consulted" : g.provider;
+      return '<div class="srcgrp"><div class="srchd"><b>' + esc(who) + '</b>'
+        + '<span>' + g.count + '</span></div>'
+        + g.items.slice(0, 12).map((it) =>
+            '<div class="srcrow"><a href="' + esc(it.url) + '" target="_blank" rel="noopener noreferrer">'
+            + esc(it.title) + '</a>'
+            + (it.tool ? '<div class="m">via ' + esc(it.tool) + '</div>' : "")
+            + '</div>').join("")
+        + (g.count > 12 ? '<div class="srcrow m">+ ' + (g.count - 12) + ' more</div>' : "")
+        + '</div>';
+    }).join("") || '<div class="empty">no sources recorded</div>';
+  } catch (e) {
+    $("run").innerHTML = '<span class="err">' + esc(e.message) + '</span>';
+  }
+}
+
+$("send").onclick = async () => {
+  const text = $("steertext").value.trim();
+  if (!text) return;
+  $("send").disabled = true;
+  try {
+    const r = await fetch("/api/steer", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    $("steernote").textContent = r.ok
+      ? "Queued. Applied at the next cycle boundary and recorded as an intervention."
+      : "Could not queue that steer.";
+    if (r.ok) $("steertext").value = "";
+  } finally { $("send").disabled = false; refresh(); }
+};
+
+document.getElementById("relayout").onclick = function () {
+  topoPos = {}; savePos();
+  for (const n of TOPO_NODES) {
+    const el = document.getElementById("mod-" + n.id);
+    if (el) { el.style.left = n.x + "px"; el.style.top = n.y + "px"; }
+  }
+  drawEdges();
+};
+
+document.getElementById("followbtn").onclick = () => {
+  followLive = true;
+  if (cache.live && cache.live.hypothesisId) {
+    select(cache.live.hypothesisId, cache.live.currentModule || undefined, false);
+  }
+  refresh();
+};
+
+document.getElementById("stopbtn").onclick = async () => {
+  const b = document.getElementById("stopbtn");
+  b.disabled = true;
+  b.textContent = "Stopping…";
+  try {
+    await fetch("/api/stop", { method: "POST" });
+    b.textContent = "Stop requested";
+  } catch (e) {
+    b.textContent = "Stop";
+    b.disabled = false;
+  }
+  refresh();
+};
+
+
+// ---- push, not poll ------------------------------------------------------
+//
+// The server already broadcasts a live pipeline snapshot over SSE whenever the
+// campaign's state changes; the page was ignoring it and polling everything on
+// a 4s timer instead. Polling meant the pipeline lagged by up to four seconds
+// and every panel re-rendered whether or not anything had happened.
+//
+// Now: the stream drives the pipeline immediately, and the heavier views
+// (tree, chart, sources) refresh only when the cycle or the step actually
+// moved, or on a slow keep-alive.
+let lastLiveKey = "";
+function startLiveStream() {
+  let es;
+  try { es = new EventSource("/api/events"); } catch { return; }
+
+  es.addEventListener("snapshot", (ev) => {
+    let live;
+    try { live = JSON.parse(ev.data); } catch { return; }
+    cache.live = live;
+    updateTopology(live);
+
+    // Only do the expensive work when something really changed.
+    const key = (live.hypothesisId ?? "") + ":" + (live.currentStep ?? "") + ":" + (live.currentModule ?? "");
+    if (key !== lastLiveKey) {
+      lastLiveKey = key;
+      refresh();
+    } else if (followLive && live.hypothesisId) {
+      // Same step, but the agent may have emitted more trace: append-only, so
+      // this is cheap and cannot disturb the reader.
+      renderTrajectory(live.hypothesisId, undefined);
+    }
+  });
+
+  es.addEventListener("unavailable", () => { /* campaign not started yet */ });
+  es.onerror = () => { /* EventSource retries on its own */ };
+}
+
+refresh();
+startLiveStream();
+// A slow keep-alive, not the primary update path: catches anything the stream
+// missed and keeps elapsed/cost current while a campaign is idle.
+setInterval(refresh, 15000);
+addEventListener("resize", () => { if (cache.tree) refresh(); });
+</script>

@@ -1,0 +1,31 @@
+{
+  "corpus_sha256": "86c4e6aa9db7c042ec79f339dcb96d42b0075e16b8fc2e86bf0ca57e2dc565ed",
+  "corpus_bytes": 1115394,
+  "vocab_size": 65,
+  "boundaries": {
+    "train_end": 1003854,
+    "val_end": 1059624,
+    "corpus_end": 1115394
+  },
+  "splits": {
+    "train": {
+      "tokens": 1003854,
+      "sha256": "090c43295a657de4b12b697bb3839f136da3899b9d82fd1658521e93c80016e5",
+      "path": "domains/tinyml/data/train.bin",
+      "protected": false
+    },
+    "val": {
+      "tokens": 55770,
+      "sha256": "82bbf2bbaf78a5fe30d5a6fb03934bcc547f05ac5b80b9169fc2a657e7322a0f",
+      "path": "domains/tinyml/data/val.bin",
+      "protected": false
+    },
+    "holdout": {
+      "tokens": 55770,
+      "sha256": "91e7edcb9600566a57703bb75d3b6b078ec62d658d49f44d3096a70483ac1653",
+      "path": ".autoresearch-protected/splits/holdout.bin",
+      "protected": true
+    }
+  },
+  "split_hash": "cd9dad825e282f360afa9100fecb3d90486c2f9fa014da3afce330af14611a04"
+}

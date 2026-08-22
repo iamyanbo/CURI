@@ -1,0 +1,4 @@
+node_modules/
+.autoresearch/
+domains/tinyml/candidate/out/
+domains/tinyml/data/*.bin

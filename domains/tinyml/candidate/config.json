@@ -1,0 +1,19 @@
+{
+  "_comment": "Declared PARAMETER surface. Edits confined to these keys classify as change_class=parameter and draw from the exploit lane quota. Structural edits to train.py classify as mechanism.",
+  "seed": 1337,
+  "steps": 1200,
+  "warmup_steps": 60,
+  "batch_size": 32,
+  "block_size": 64,
+  "d_model": 64,
+  "n_layer": 2,
+  "n_head": 4,
+  "mlp_ratio": 2,
+  "lr": 0.003,
+  "weight_decay": 0.1,
+  "beta1": 0.9,
+  "beta2": 0.95,
+  "grad_clip": 1.0,
+  "log_every": 100,
+  "eval_tokens": 200000
+}
