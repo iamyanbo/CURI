@@ -13,9 +13,11 @@ ENV NODE_ENV=production
 COPY deploy/mirror.package.json ./package.json
 RUN npm install --omit=dev --no-audit --no-fund
 
-# Only the three files the mirror actually serves. `publish.ts` is referenced
-# solely as a type and is erased before runtime, so it is not copied.
-COPY src/research/mirror.ts src/research/mirror-entry.ts src/research/dashboard.html ./src/research/
+# Only the files the mirror actually serves. `publish.ts` is referenced solely as
+# a type and is erased before runtime, so it is not copied; `trace-publish.ts` is
+# a real import — it holds the identifier check that guards publishing — and it
+# depends on nothing outside node:os.
+COPY src/research/mirror.ts src/research/mirror-entry.ts src/research/trace-publish.ts src/research/dashboard.html ./src/research/
 
 # Cloud Run sends traffic to $PORT and expects a listener on 0.0.0.0.
 ENV PORT=8080

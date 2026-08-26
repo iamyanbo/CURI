@@ -156,6 +156,53 @@ export function publishableTrace(steps: Array<Record<string, unknown>>, options:
  */
 export const STEPS_PER_CHUNK = 100;
 
+export interface AuditFinding { path: string; identifier: string; }
+
+/**
+ * The last gate before anything leaves the machine.
+ *
+ * Per-step checking only covers traces. Everything else in the record — briefs,
+ * outcomes, syntheses, command arguments — is redacted on the way in, and a
+ * redactor is a guess about what a leak looks like. So the assembled record is
+ * walked field by field and checked against the same identifiers, which means
+ * an operator does not have to trust that every producer remembered to redact:
+ * a value that reaches the boundary un-redacted stops the publish.
+ *
+ * Only the first finding per field is reported; the point is to refuse, not to
+ * enumerate. Findings name the field path and which identifier matched, never
+ * the surrounding text, so a log of a refusal is not itself a leak.
+ */
+export function auditPublishedRecord(record: unknown, identifiers: string[]): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  const walk = (value: unknown, path: string) => {
+    if (findings.length >= 20) return;
+    if (typeof value === "string") {
+      const identifier = residualIdentifier(value, identifiers);
+      if (identifier) findings.push({ path, identifier });
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => walk(item, `${path}[${index}]`));
+      return;
+    }
+    if (value && typeof value === "object") {
+      for (const [key, item] of Object.entries(value)) walk(item, path ? `${path}.${key}` : key);
+    }
+  };
+  walk(record, "");
+  return findings;
+}
+
+/** Throws unless the record is clean. Called on the way out, by every path. */
+export function assertPublishable(record: unknown, identifiers = machineIdentifiers()): void {
+  const findings = auditPublishedRecord(record, identifiers);
+  if (findings.length === 0) return;
+  const where = findings.slice(0, 5).map((finding) => finding.path).join(", ");
+  throw new Error(
+    `refusing to publish: ${findings.length} field(s) still contain machine-identifying text (${where}). `
+    + "This is a redaction gap, not a transient failure: the field must be redacted at its source.");
+}
+
 export function chunkTraceSteps(runId: string, steps: PublishedTraceStep[]): Array<Record<string, unknown>> {
   const chunks: Array<Record<string, unknown>> = [];
   for (let index = 0; index < steps.length; index += STEPS_PER_CHUNK) {

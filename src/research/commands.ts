@@ -11,6 +11,7 @@ import {
 } from "./runtime.js";
 import { collectPreflight, preflightCachePath, preflightFacts, renderPreflightMarkdown } from "./preflight.js";
 import { buildPublishedRecord } from "./publish.js";
+import { auditPublishedRecord, machineIdentifiers } from "./trace-publish.js";
 import { publishToFirestore, serveMirror } from "./mirror.js";
 import { serveResearchDashboard } from "./server.js";
 import { RESEARCH_SCHEMA_VERSION } from "./store.js";
@@ -187,7 +188,11 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
         return;
       }
       if (args.includes("--dry-run")) {
+        // The same gate the real publish runs, reported rather than thrown, so
+        // an operator can see what would be refused before sending anything.
+        const findings = auditPublishedRecord(record, machineIdentifiers());
         console.log({ directionId: id, bytes: JSON.stringify(record).length,
+          identifierFindings: findings.length, findingPaths: findings.slice(0, 5).map((f) => f.path),
           counts: Object.fromEntries(Object.entries(record)
             .filter(([, v]) => Array.isArray(v)).map(([k, v]) => [k, (v as unknown[]).length])) });
         return;

@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  chunkTraceSteps, machineIdentifiers, publishableTrace, publishableTraceStep,
-  redactTraceText, residualIdentifier, STEPS_PER_CHUNK,
+  assertPublishable, auditPublishedRecord, chunkTraceSteps, machineIdentifiers,
+  publishableTrace, publishableTraceStep, redactTraceText, residualIdentifier, STEPS_PER_CHUNK,
 } from "../src/research/trace-publish.js";
 
 const identifiers = ["yanbo", "DESKTOP-9GTQ2", "C:\\Users\\yanbo", "plain-looking-key-value"];
@@ -113,4 +113,28 @@ test("steps are grouped so republishing a long run stays cheap", () => {
   // Ids are deterministic: a later sync overwrites the same documents rather
   // than accumulating duplicates.
   assert.deepEqual(chunkTraceSteps("RUN-1", steps).map((c) => c.chunk_id), chunks.map((c) => c.chunk_id));
+});
+
+test("an identifier anywhere in the record refuses the publish", () => {
+  // The per-step check only covers traces. This is the gate that means an
+  // operator does not have to trust that every producer remembered to redact.
+  const record = {
+    direction: { direction_id: "d", title: "fine" },
+    syntheses: [{ synthesis_id: "SYN-1", markdown: "the run lived under /home/yanbo/work" }],
+  };
+  assert.throws(() => assertPublishable(record, identifiers), /refusing to publish/);
+  const findings = auditPublishedRecord(record, identifiers);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0]!.path, "syntheses[0].markdown");
+  // The finding names the field, never the offending text, so a log of a
+  // refusal is not itself a leak.
+  assert.equal(JSON.stringify(findings).includes("/home/"), false);
+});
+
+test("a clean record passes the gate", () => {
+  assert.doesNotThrow(() => assertPublishable({
+    direction: { direction_id: "d" },
+    syntheses: [{ markdown: "K/V quantization error is asymmetric; see <workspace>/study.py" }],
+    runs: [{ run_id: "RUN-1", cost_usd: 0.4, segments: [{ kind: "tool", label: "run" }] }],
+  }, identifiers));
 });

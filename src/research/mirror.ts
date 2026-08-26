@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { Firestore, WriteBatch } from "@google-cloud/firestore";
 
+import { assertPublishable } from "./trace-publish.js";
 import type { PublishedRecord } from "./publish.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +55,11 @@ export async function publishToFirestore(input: {
     ? new Firestore({ ...(input.projectId ? { projectId: input.projectId } : {}),
       ...(input.databaseId ? { databaseId: input.databaseId } : {}) })
     : new Firestore();
+  // Nothing is written until the assembled record passes the identifier check.
+  // The per-field redactors run on the way in; this is the check on the way out,
+  // and it is the reason publishing can be automatic rather than reviewed by
+  // hand before each sync.
+  assertPublishable(input.record);
   const directionId = String(input.record.direction.direction_id);
   const root = firestore.collection("directions").doc(directionId);
   let documents = 0;
