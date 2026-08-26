@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSyn
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { requestedStop } from "./control.js";
 import { cachedPreflight, renderPreflightMarkdown } from "./preflight.js";
 import {
   clearRunStops, continuousFile, continuousMode, openResearchStore, researchCostCeiling,
@@ -357,7 +358,19 @@ export async function serveResearchDashboard(input: { projectRoot: string; direc
   });
   console.log(`research dashboard http://127.0.0.1:${input.port}`);
   await new Promise<void>((resolveClose) => {
-    const close = () => server.close(() => resolveClose());
+    let closing = false;
+    const close = () => {
+      if (closing) return;
+      closing = true;
+      clearInterval(watch);
+      server.close(() => resolveClose());
+    };
+    // `research stop --all` used to leave the dashboard running: it had no stop
+    // path at all, so "stop everything" was not true, and an open database
+    // handle blocks work that needs the state directory to itself — on Windows
+    // a migration cannot move a directory the OS considers in use.
+    const watch = setInterval(() => { if (requestedStop(input.projectRoot)) close(); }, 2_000);
+    watch.unref();
     process.once("SIGINT", close); process.once("SIGTERM", close);
   });
 }

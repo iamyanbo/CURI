@@ -95,3 +95,12 @@ test("workspace previews cannot escape the task worktree", () => {
   assert.equal(insideWorkspace(workspace, ""), null);
   assert.ok(insideWorkspace(workspace, "results/data.csv"));
 });
+
+test("the dashboard has a stop path, so stop --all means everything", () => {
+  // It previously had none: `research stop --all` left the server running, and
+  // its open database handle blocks a state-directory migration on Windows.
+  const server = readFileSync(join(process.cwd(), "src", "research", "server.ts"), "utf8");
+  const shutdown = server.slice(server.indexOf("await new Promise<void>((resolveClose)"));
+  assert.match(shutdown, /requestedStop\(input\.projectRoot\)/);
+  assert.match(shutdown, /clearInterval\(watch\)/);
+});
