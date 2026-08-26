@@ -95,6 +95,51 @@ orchestrator's next context, so a bad move gets corrected rather than repeated.
 
 ---
 
+## Running continuously without busy work
+
+The orchestrator does research when there is something to research, and costs
+almost nothing when there is not. That is a property of the runtime, not an
+instruction to the model: no prompt tells it to keep going, and `pause_research`
+remains a move it can choose at any time.
+
+Work runs while work exists — a queued task goes to the executor, otherwise the
+orchestrator takes a turn. The supervisor only has to decide anything when the
+loop comes back with nothing:
+
+| the loop returned | what the supervisor does |
+|---|---|
+| operator stop, or the spend ceiling was reached | exit |
+| the orchestrator paused, continuous mode off | exit; the pause stands |
+| the orchestrator paused, continuous mode on | take the direction up again, then wait |
+| nothing delegated this turn | wait |
+
+A pause and an idle turn are the same signal — nothing is worth doing right now —
+so both wait on the same curve, doubling from one minute to a thirty-minute
+ceiling:
+
+```
+1 → 2 → 4 → 8 → 16 → 30 minutes, then capped
+```
+
+**The wait resets to one minute the moment anything happens in the direction**: a
+source admitted, a task delegated or returned, an outcome recorded, a synthesis
+written, a delegation refused. Ten quiet hours therefore cost about two dozen
+orchestrator turns rather than a paid poll every few seconds.
+
+In practice the watcher becomes the metronome. When the orchestrator has
+exhausted its current questions it pauses, is taken up again, pauses again, and
+the interval stretches to half an hour. Then the watcher admits a paper, that
+appends an event, the wait snaps back to a minute, and the orchestrator wakes to
+weigh the new evidence. **Research resumes because evidence arrived, not because
+a timer fired.**
+
+Continuous mode is a deployment choice made outside the model — `research
+continuous` to enable, `--off` to make a pause final. Either way the pause and
+the reasoning behind it stay in the record.
+
+---
+
+
 ## Features
 
 - **Autonomous research loop** — watcher, orchestrator and executor, one experiment at a time.

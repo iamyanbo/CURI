@@ -262,33 +262,38 @@ export async function runResearchSupervisor(input: { projectRoot: string; direct
     // synthesis. So idle turns back off, and the backoff resets the moment the
     // direction actually changes — a new source, a returned task, anything that
     // appends an event.
-    let idleTurns = 0;
+    // "Run continuously" means stay available for work, not keep poking the
+    // orchestrator. A pause and an idle turn are the same signal — there is
+    // nothing worth doing right now — so both back off on the same curve and
+    // both reset the moment the direction actually changes. Without this, a
+    // direction the orchestrator judged finished would be re-asked every few
+    // seconds at the price of a full turn each time.
+    let quietTurns = 0;
     let lastSeenEvent = -1;
     while (!requestedStop(input.projectRoot)) {
       const result = await runResearchLoop({ ...input });
-      const wasPaused = result.stopped === "paused" || result.stopped === "orchestrator paused direction";
-      if (wasPaused && continuousMode(input.projectRoot)) {
-        const store = openResearchStore(input.projectRoot);
-        try {
-          store.db.prepare("UPDATE directions SET status='active',updated_at=? WHERE direction_id=?")
-            .run(researchNow(), input.directionId);
-          store.appendEvent(input.directionId, null, "direction.resumed", "system",
-            "Continuous mode is enabled, so the paused direction was taken up again."
-            + " The pause and its reasoning remain recorded.");
-        } finally { store.close(); }
-        if (!await cancellableDelay(input.projectRoot, 15_000)) break;
-        continue;
-      }
-      if (!result.stopped.startsWith("idle")) break;
+      const paused = result.stopped === "paused" || result.stopped === "orchestrator paused direction";
+      const idle = result.stopped.startsWith("idle");
+      if (!paused && !idle) break;
+      if (paused && !continuousMode(input.projectRoot)) break;
+
       const store = openResearchStore(input.projectRoot);
       let latestEvent = lastSeenEvent;
       try {
         latestEvent = Number((store.db.prepare("SELECT COALESCE(MAX(seq),0) seq FROM events WHERE direction_id=?")
           .get(input.directionId) as { seq: number }).seq);
+        if (paused) {
+          // The pause stands in the record; continuous mode only decides whether
+          // the direction is taken up again once something has moved on.
+          store.db.prepare("UPDATE directions SET status='active',updated_at=? WHERE direction_id=?").run(researchNow(), input.directionId);
+          store.appendEvent(input.directionId, null, "direction.resumed", "system",
+            "Continuous mode took the paused direction up again. The pause and its reasoning remain recorded.");
+        }
       } finally { store.close(); }
-      idleTurns = latestEvent > lastSeenEvent ? 0 : idleTurns + 1;
+
+      quietTurns = latestEvent > lastSeenEvent ? 0 : quietTurns + 1;
       lastSeenEvent = latestEvent;
-      if (!await cancellableDelay(input.projectRoot, idleBackoffMs(idleTurns))) break;
+      if (!await cancellableDelay(input.projectRoot, idleBackoffMs(quietTurns))) break;
     }
   } finally { try { unlinkSync(pidPath); } catch { /* best effort */ } }
 }

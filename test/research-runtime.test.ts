@@ -337,3 +337,21 @@ test("continuous mode is a deployment choice that never rewrites the pause itsel
     assert.equal(continuousMode(root), true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test("continuous running is availability, not a prompt that forbids stopping", () => {
+  // The orchestrator keeps pause_research and the prompt never tells it to keep
+  // going; continuous mode is a deployment choice made outside the model.
+  const prompt = readFileSync(join(process.cwd(), "prompts", "researcher.md"), "utf8");
+  assert.doesNotMatch(prompt, /never stop|do not stop|keep going|continue forever|always delegate/i);
+  assert.match(prompt, /or pause instead of launching another/);
+
+  // A direction taken up again after a pause backs off on the same curve as an
+  // idle turn, so "forever" cannot become a paid poll every few seconds.
+  const runtime = readFileSync(join(process.cwd(), "src", "research", "runtime.ts"), "utf8");
+  assert.match(runtime, /idleBackoffMs\(quietTurns\)/);
+  assert.doesNotMatch(runtime, /cancellableDelay\(input\.projectRoot, 15_000\)/);
+  // Ten hours with nothing happening costs a handful of turns, paused or idle.
+  let elapsed = 0; let turns = 0;
+  for (let i = 0; elapsed < 10 * 3_600_000; i++) { elapsed += idleBackoffMs(i); turns++; }
+  assert.ok(turns < 30, `expected few turns while quiet, got ${turns}`);
+});
