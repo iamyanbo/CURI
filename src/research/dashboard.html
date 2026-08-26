@@ -546,7 +546,7 @@ function understanding(){
   $('#scope').querySelectorAll('[data-scope]').forEach(el=>el.onclick=()=>{
     component=el.dataset.scope;invalidate('understanding');invalidate('tasks');invalidate('roll');invalidate('components');paint()});
   const syn=arr(S.syntheses).filter(scoped);
-  $('#understanding-note').textContent=syn.length+' revisions · human review decides what stands';
+  $('#understanding-note').textContent=syn.length+' revisions · superseded as better evidence arrives';
   const host=$('#understanding');
   if(!syn.length){host.innerHTML='<div class="empty">No synthesis in this scope yet. Findings stay visible as tentative outcomes until the orchestrator synthesises them.</div>';return}
   host.innerHTML=syn.map(s=>{
@@ -568,26 +568,9 @@ function understanding(){
         ${s.review?`<div class="t-meta" style="margin-top:12px">human review: ${esc(s.review.note_md)}</div>`:''}
       </div>
       <div class="foot"><span class="t-micro">${esc(s.synthesis_id)}</span>
-        <span class="t-small" style="color:var(--text-3)">Your verdict and the reason you type both reach the orchestrator's next turn.</span>
-        <span style="margin-left:auto"></span>
-        <button class="btn primary" data-review="accepted" data-syn="${esc(s.synthesis_id)}"
-          title="Marks this revision as current understanding: later work builds on it rather than relitigating it, and it supersedes the revision it replaced.">accept</button>
-        <button class="btn" data-review="needs_evidence" data-syn="${esc(s.synthesis_id)}"
-          title="Keeps it tentative and sends your reason back as a research instruction: the orchestrator should design the study that supplies the missing evidence.">needs evidence</button>
-        <button class="btn" data-review="rejected" data-syn="${esc(s.synthesis_id)}"
-          title="Rejects the account. Your reason tells the orchestrator what was wrong so it can record a corrected synthesis that supersedes this one.">reject</button></div>
+        <span class="t-small" style="color:var(--text-3)">Tentative: a revision stands until better evidence supersedes it.</span></div>
     </article>`}).join('');
   syn.forEach(s=>prose(host.querySelector('[data-md="'+s.synthesis_id+'"]'),stripLeadingHeading(s.body_md)));
-  host.querySelectorAll('[data-review]').forEach(el=>el.onclick=e=>{e.stopPropagation();reviewSynthesis(el.dataset.syn,el.dataset.review)});
-}
-async function reviewSynthesis(id,verdict){
-  const question=verdict==='accepted'?'Why should this become accepted current understanding?'
-    :verdict==='needs_evidence'?'What evidence is still needed?':'Why should this synthesis be rejected?';
-  const note=prompt(question,'');if(note===null)return;
-  const r=await fetch('/api/syntheses/'+encodeURIComponent(id)+'/reviews',{method:'POST',
-    headers:{'content-type':'application/json'},body:JSON.stringify({verdict,noteMarkdown:note})});
-  if(!r.ok){const e=await r.json().catch(()=>({error:'review failed'}));alert(e.error||'review failed');return}
-  invalidate('understanding');await load();
 }
 
 /* --- components: a graph, because threads relate to each other --- */
@@ -830,6 +813,22 @@ function traceView(l){
   q.oninput=()=>{traceQuery=q.value.toLowerCase();traceView(l);
     const again=$('#tracebar').querySelector('#tq');if(again){again.focus();again.setSelectionRange(again.value.length,again.value.length)}};
   if(!l){host.innerHTML='<div class="empty">Select a run in the piano roll.</div>';$('#trace-note').textContent='';return}
+  if(S&&S.published){
+    // Traces carry prompts, file paths and command output from the machine that
+    // ran the work, so they are deliberately not part of a published record.
+    const b=l.breakdown||{};
+    $('#trace-note').textContent=l.role+' · '+l.state;
+    host.innerHTML='<div class="step" style="grid-template-columns:1fr"><div>'
+      +'<span class="tag thinking">reasoning '+fmt(b.thinking||0)+'</span>'
+      +'<span class="tag tool_call">tools '+fmt(b.tool||0)+' · '+(b.toolCalls||0)+'</span>'
+      +'<span class="tag tool_result">model '+fmt(b.model||0)+'</span>'
+      +'<span class="tag">waiting '+fmt(b.waiting||0)+'</span>'
+      +(b.errors?'<span class="tag err">'+b.errors+' errors</span>':'')+'</div></div>'
+      +'<div class="empty">The timeline of this run is published, its transcript is not.<br>'
+      +'Agent traces contain prompts, file paths and command output from the machine that ran the work, '
+      +'so they stay on that machine. The piano roll on the left is drawn from the published timing.</div>';
+    return;
+  }
   const hb=l.heartbeat,b=l.breakdown||{},detail=runDetail.get(l.id);loadRun(l.id,l.traceTotal);
   $('#trace-note').textContent=l.role+' · '+l.state+' · '+(l.traceTotal||0)+' steps'
     +(hb?' · '+(hb.phase||'')+' · observed '+ago(hb.observedAt):'')+(detail?'':' · loading');
@@ -868,6 +867,14 @@ function paint(){
   if(!S||S.empty)return;
   $('#title').textContent=S.direction.title;
   $('#subtitle').textContent=S.direction.direction_id;
+  if(S.published){
+    const badge=$('#pause');
+    badge.textContent=S.publishedAt?'published '+ago(S.publishedAt):'published record';
+    badge.className='chip';
+    badge.style.cursor='default';
+    badge.title='A read-only mirror of a published research record. The live pipeline runs on the operator machine.';
+    live=false;
+  }
   headStats();
   navBar();
   const lanesSig=arr(S.execution?.lanes).map(l=>l.id+':'+l.state+':'+(l.traceTotal||0)+':'+Math.round(l.durationMs/2000)).join(',');
@@ -881,7 +888,11 @@ function paint(){
   ifChanged('diagnostics',sig([arr(S.notes).length,S.supervisor?.running,S.watcher?.running,arr(S.tasks).length]),diagnostics);
   ifChanged('roll',sig([lanesSig,component,task,roleFilter,zoom,lane,selSeq]),execution);
 }
-$('#pause').onclick=()=>{live=!live;$('#pause').textContent=live?'live':'paused';$('#pause').className='chip '+(live?'on':'')};
+$('#pause').onclick=()=>{
+  // A published mirror has nothing to poll for: the record only changes when it
+  // is republished, so the control is a state label there rather than a toggle.
+  if(S&&S.published)return;
+  live=!live;$('#pause').textContent=live?'live':'paused';$('#pause').className='chip '+(live?'on':'')};
 $('#detail-close').onclick=()=>{view='overview';paint()};
 document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;
   if(e.key==='f'){follow=!follow;invalidate('roll');paint()}

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -135,5 +135,39 @@ test("several runs of one task keep distinct published identities", () => {
     const ids = record.runs.map((run) => String(run[idField]));
     assert.equal(ids.length, 3);
     assert.equal(new Set(ids).size, 3, "three attempts on one task must not share a document id");
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("published run timing carries shape but no content", () => {
+  // The piano roll needs intervals, not transcripts. A segment may name the tool
+  // that ran; it must never carry its arguments, its output or a path.
+  const { root, store } = fixture();
+  try {
+    const taskId = store.delegateTask({ directionId: "direction", mode: "exploration", markdown: "# Study" });
+    store.db.prepare("UPDATE tasks SET state='awaiting_orchestrator' WHERE task_id=?").run(taskId);
+    const attemptDir = join(root, "attempt");
+    mkdirSync(attemptDir, { recursive: true });
+    writeFileSync(join(attemptDir, "trace.jsonl"), [
+      JSON.stringify({ seq: 0, kind: "tool_call", toolName: "run", toolCallId: "a", atMs: 1000,
+        content: `{"executable":"py","args":["C:${BS}Users${BS}yanbo${BS}secret.py"]}` }),
+      JSON.stringify({ seq: 1, kind: "tool_result", toolName: "run", toolCallId: "a", atMs: 4000,
+        content: "stdout mentioning C:" + BS + "Users" + BS + "yanbo" }),
+    ].join("\n"), "utf8");
+    const runId = store.beginRun({ directionId: "direction", taskId, role: "executor",
+      inputMarkdown: "brief", attemptDir });
+    store.finishRun({ runId, state: "succeeded", outputMarkdown: "done" });
+
+    const record = buildPublishedRecord(store, "direction", root);
+    const run = record.runs[0] as Record<string, any>;
+    assert.equal(run.segments.length, 1);
+    assert.equal(run.segments[0].label, "run");
+    assert.equal(run.segments[0].endMs - run.segments[0].startMs, 3000);
+    assert.equal(run.breakdown.toolCalls, 1);
+    // No transcript, and nothing naming the machine.
+    const json = JSON.stringify(record);
+    assert.equal(json.includes("yanbo"), false);
+    assert.equal(json.includes("secret.py"), false);
+    assert.equal(json.includes("stdout"), false);
+    assert.equal("trace" in run, false);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });

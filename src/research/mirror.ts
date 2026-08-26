@@ -123,9 +123,11 @@ export function mirrorState(record: PublishedRecord): Record<string, unknown> {
       startMs: start, endMs: end, durationMs: Math.max(0, end - start),
       model: run.model, tokens: Number(run.input_tokens ?? 0) + Number(run.output_tokens ?? 0),
       costUsd: run.cost_usd, failure: run.failure,
-      // No trace, no segments and no heartbeat: those live only on the machine
-      // that ran the work, and this mirror never sees that machine.
-      trace: [], traceTotal: 0, segments: [], breakdown: { total: Math.max(0, end - start) }, heartbeat: null,
+      // Timing is published, text is not: the piano roll draws from the shape of
+      // the run while the trace itself stays on the machine that produced it.
+      segments: run.segments ?? [],
+      breakdown: run.breakdown ?? { total: Math.max(0, end - start) },
+      trace: [], traceTotal: 0, heartbeat: null,
     };
   });
   return {

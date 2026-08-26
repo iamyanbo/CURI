@@ -54,7 +54,6 @@ flowchart TB
     SUP -->|outcome| ORCH
     ORCH -->|synthesis| DB
     DB --> DASH
-    HUMAN(["Human review<br/>accept · needs evidence · reject"]) --> DB
     DB --> DASH
 
     ORCH -.->|Genkit| VERTEX
@@ -73,8 +72,7 @@ flowchart TB
 writes a brief → a gate refuses briefs that cite no evidence or repeat an earlier study → the
 executor implements it in an isolated git worktree → the runtime **independently re-runs** every
 decisive check → the orchestrator interprets the result into an outcome, and material findings
-into a synthesis → a human accepts, rejects, or asks for more evidence, and that reason is fed
-back into the next turn.
+into a synthesis that later evidence can supersede.
 
 ---
 
@@ -89,7 +87,7 @@ These are enforced, not aspirational:
 | No silent repetition | A brief ≥75% identical to an earlier task is **refused** unless it names that task and says which explanation the difference discriminates |
 | Claims stay inside their evidence | Every outcome must state its envelope — models, context lengths, hardware, sample size, untested regimes |
 | Negative results are findings | `refuted`, `bounded` and `inconclusive` are terminal research outcomes, not errors |
-| Understanding accumulates | Syntheses attach to research threads and supersede one another; they remain tentative until a human reviews them |
+| Understanding accumulates | Syntheses attach to research threads and supersede one another; every revision stays tentative and is replaced only by better evidence |
 | The agent may stop | The orchestrator can pause a direction when it judges a milestone reached, instead of manufacturing work |
 
 Refusals are not silent: they are written back as runtime feedback and appear in the
@@ -277,8 +275,8 @@ itself, judging a milestone reached:
   the runtime treats an interrupted attempt as work to resume rather than work to discard, and does
   not charge it against the attempt budget.
 - **A refusal must explain itself.** Feedback written where nobody reads it is the same as no
-  feedback: refused delegations and human review notes are both surfaced in the orchestrator's next
-  context.
+  feedback: a refused delegation is surfaced in the orchestrator's next context rather than
+  discarded.
 - **Verdict language drifts optimistic.** Left unconstrained, the orchestrator wrote "proved" and
   "established" from n=3 on a 0.5B model. Outcomes must now state the envelope their evidence
   covers, and `supported` is reserved for claims whose falsifier was actually tested.

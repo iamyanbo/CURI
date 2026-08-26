@@ -1,3 +1,4 @@
+import { readTraceSteps, traceBreakdown, traceSegments } from "./trace.js";
 import { ResearchStore } from "./store.js";
 
 /**
@@ -38,7 +39,8 @@ export interface PublishedRecord {
   publishedAt: string;
 }
 
-export function buildPublishedRecord(store: ResearchStore, directionId: string): PublishedRecord {
+export function buildPublishedRecord(store: ResearchStore, directionId: string,
+  projectRoot = process.cwd()): PublishedRecord {
   const context = store.context(directionId);
   const reviewFor = (synthesisId: unknown) =>
     context.synthesisReviews.find((item) => item.synthesis_id === synthesisId) ?? null;
@@ -89,12 +91,23 @@ export function buildPublishedRecord(store: ResearchStore, directionId: string):
     })),
     // Run shape without the prompt: enough to show what ran, how long, and how
     // it ended, with no trace text and no attempt directories.
-    runs: context.runs.map((item) => ({
-      run_id: item.run_id, task_id: item.task_id, role: item.role, state: item.state,
-      failure: item.failure, model: item.model, provider: item.provider,
-      input_tokens: item.input_tokens, output_tokens: item.output_tokens, cost_usd: item.cost_usd,
-      started_at: item.started_at, completed_at: item.completed_at,
-    })),
+    runs: context.runs.map((item) => {
+      const start = Date.parse(String(item.started_at));
+      const end = item.completed_at ? Date.parse(String(item.completed_at)) : start;
+      const durationMs = Math.max(0, end - start);
+      // The timing shape is published; the trace text is not. A segment carries
+      // a tool name, an interval and an error flag — no arguments, no output and
+      // no path — so the timeline can be shown without publishing what ran where.
+      const segments = traceSegments(readTraceSteps(projectRoot, item.attempt_dir), durationMs)
+        .map(({ kind, label, startMs, endMs, isError }) => ({ kind, label, startMs, endMs, isError }));
+      return {
+        run_id: item.run_id, task_id: item.task_id, role: item.role, state: item.state,
+        failure: item.failure, model: item.model, provider: item.provider,
+        input_tokens: item.input_tokens, output_tokens: item.output_tokens, cost_usd: item.cost_usd,
+        started_at: item.started_at, completed_at: item.completed_at,
+        segments, breakdown: traceBreakdown(segments as never, durationMs),
+      };
+    }),
     // The independent verification is the evidence, so the command and its exit
     // code are published; its output may quote local paths, so it is redacted.
     commands: context.commands.map((item) => ({

@@ -4,9 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import {
-  buildResearchDashboardState, insideWorkspace, traceBreakdown, traceSegments,
-} from "../src/research/server.js";
+import { buildResearchDashboardState, insideWorkspace } from "../src/research/server.js";
+import { traceBreakdown, traceSegments } from "../src/research/trace.js";
 import { ResearchStore } from "../src/research/store.js";
 
 test("lean dashboard is valid and exposes research, components, piano roll and trace", () => {
@@ -27,7 +26,12 @@ test("dashboard scopes execution by component and task", () => {
   const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
   assert.match(html, /function filteredTasks/); assert.match(html, /function lanes/);
   assert.match(html, /componentId/); assert.match(html, /taskId/); assert.match(html, /data-lane/);
-  assert.match(html, /reviewSynthesis/); assert.match(html, /undigested findings/);
+  // The review controls are withdrawn while the system runs as pure autonomous
+  // research; the record still shows what stands and what superseded what.
+  assert.doesNotMatch(html, /data-review=/);
+  assert.doesNotMatch(html, /reviewSynthesis/);
+  assert.match(html, /superseded as better evidence arrives/);
+  assert.match(html, /undigested findings/);
   assert.match(html, /Raw internal event/);
 });
 
