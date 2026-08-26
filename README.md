@@ -286,6 +286,12 @@ npx tsx src/cli.ts research stop --all              # stop everything
 The spend ceiling is enforced before every orchestrator turn and every watcher sweep, so an
 unattended run has a hard upper bound you set yourself.
 
+State lives in `.curi/`. A project created before the rename keeps its `.autoresearch/`
+directory, because moving it is a migration rather than a rename — the store records absolute
+attempt paths and git registers each worktree by absolute path. `research migrate-state
+--dry-run` reports what would change; without the flag it moves the directory, rewrites the
+recorded paths and repairs the worktrees, and it refuses to run while any daemon is live.
+
 ### Optional: publish the record and a public mirror
 
 Only needed if you want the research record readable outside your machine. The mirror is read-only
@@ -321,7 +327,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 89 tests
+npm test        # 102 tests
 npm run typecheck
 ```
 
