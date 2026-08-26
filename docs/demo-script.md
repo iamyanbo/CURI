@@ -1,8 +1,11 @@
-# CURI — 4-minute demo script
+# CURI — Cumulative Research & Inquiry — 4-minute demo script
 
 Covers the four required beats: the problem, the value proposition, the app in action, and visible
 proof that the backend runs on Google Cloud. Timings are targets, not a stopwatch; the whole thing
 lands at roughly 3:50 spoken at a normal pace.
+
+This is a production script, not a README to read aloud. Keep the dashboard, trace and cloud
+consoles moving while you speak; each section says what to show and what the viewer should notice.
 
 **Before recording**
 
@@ -26,6 +29,10 @@ lands at roughly 3:50 spoken at a normal pace.
 > The failure is structural, not a matter of prompting. If the system's unit of progress is "the
 > number improved", it can never record that a method *failed*, and a negative result is often the
 > most useful thing an experiment produces.
+
+> I made this demo for the purposes of entering the Google Cloud hackathon. The question I wanted
+> to explore was whether an autonomous system could do research without turning every question into
+> a score-improvement contest.
 
 *On screen:* the README's "Research vs Benchmark Chasing" table.
 
@@ -53,7 +60,8 @@ Move through the dashboard, narrating what is on screen. Do not describe feature
 
 **Direction and threads** (~15s)
 > This direction asks how transformer inference mechanisms adapt across memory-pressure and
-> long-context regimes. Four research threads, each carrying its own evolving understanding.
+> long-context regimes. There are four research threads, each carrying its own evolving
+> understanding, and six recorded outcomes from the run.
 
 **The piano roll** (~25s)
 > This is the actual execution, on a real time axis: reasoning in one colour, tool calls in
@@ -122,6 +130,6 @@ This is the required proof beat. Show, do not assert.
 - **The strongest 20 seconds** are the refuted hypothesis and the recorded pause. Both are things a
   score-maximizing loop cannot produce. If you cut for time, cut a dashboard view, not those.
 - **Say the numbers you can defend.** 51 runs, $13.44 recorded spend, 15.9M input and 424k output
-  tokens, six recorded outcomes — five supported, one bounded.
+  tokens, six recorded outcomes across four research threads — five supported, one bounded.
 - Do not claim novelty. The findings largely re-derive published work, and the video is stronger
   for saying so before anyone else does.

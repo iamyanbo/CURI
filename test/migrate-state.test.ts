@@ -5,7 +5,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { livePidFiles, migrateState, planMigration } from "../src/research/migrate-state.js";
+import {
+  livePidFiles, migrateState, planMigration, rewriteRecordedPaths, staleRecordedPaths,
+} from "../src/research/migrate-state.js";
 import { ResearchStore } from "../src/research/store.js";
 
 const LEGACY = ".autoresearch";
@@ -29,6 +31,14 @@ function fixture(): { root: string; cleanup: () => void } {
       .run(join(state, "worktrees", "TASK-ws"), taskId);
     store.beginRun({ directionId: "direction", taskId, role: "executor",
       inputMarkdown: "brief", attemptDir: join(state, "attempts", "attempt-1") });
+    // Source paths are stored *relative*, beginning with the directory name.
+    // A rewrite anchored on a leading separator misses them entirely.
+    store.db.prepare(
+      `INSERT INTO sources (source_id,direction_id,provider,canonical_url,title,state,card_md,
+        raw_path,normalized_path,created_at,updated_at)
+       VALUES ('SRC-1','direction','arxiv','https://arxiv.org/abs/1','t','relevant','c',?,?,?,?)`,
+    ).run(`${LEGACY}/sources/direction/SRC-1.raw`, `${LEGACY}/sources/direction/SRC-1.md`,
+      new Date().toISOString(), new Date().toISOString());
   } finally { store.close(); }
 
   return { root, cleanup: () => rmSync(root, { recursive: true, force: true }) };
@@ -124,5 +134,37 @@ test("registered worktrees are repaired at their new location", () => {
     const listed = execFileSync("git", ["worktree", "list"], { cwd: root, encoding: "utf8", windowsHide: true });
     assert.match(listed, /\.curi/);
     assert.doesNotMatch(listed, /\.autoresearch/);
+  } finally { cleanup(); }
+});
+
+test("relative source paths are rewritten, not just absolute ones", () => {
+  // The case a separator-anchored rewrite silently skipped: 27 rows in a real
+  // project were left pointing at a directory that no longer existed.
+  const { root, cleanup } = fixture();
+  try {
+    migrateState(root);
+    const store = ResearchStore.open(join(root, CURRENT, "research.sqlite"));
+    try {
+      const row = store.db.prepare("SELECT raw_path r, normalized_path n FROM sources").get() as
+        { r: string; n: string };
+      assert.equal(row.r, ".curi/sources/direction/SRC-1.raw");
+      assert.equal(row.n, ".curi/sources/direction/SRC-1.md");
+      assert.equal(staleRecordedPaths(store, LEGACY), 0);
+    } finally { store.close(); }
+  } finally { cleanup(); }
+});
+
+test("recorded paths can be repaired without moving anything", () => {
+  // Finishes a migration whose directory move already happened.
+  const { root, cleanup } = fixture();
+  try {
+    migrateState(root);
+    const store = ResearchStore.open(join(root, CURRENT, "research.sqlite"));
+    try {
+      store.db.prepare("UPDATE sources SET raw_path=?").run(`${LEGACY}/sources/direction/SRC-1.raw`);
+      assert.equal(staleRecordedPaths(store, LEGACY), 1);
+      assert.equal(rewriteRecordedPaths(store, LEGACY, CURRENT) >= 1, true);
+      assert.equal(staleRecordedPaths(store, LEGACY), 0);
+    } finally { store.close(); }
   } finally { cleanup(); }
 });

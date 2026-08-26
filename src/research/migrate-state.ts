@@ -82,6 +82,51 @@ function registeredWorktrees(projectRoot: string): string[] {
   } catch { return []; }
 }
 
+/** Every column that records a path into the state directory. */
+const PATH_COLUMNS = [
+  ["runs", "attempt_dir"], ["tasks", "workspace_path"],
+  ["sources", "raw_path"], ["sources", "normalized_path"],
+] as const;
+
+/**
+ * Rewrites recorded paths from one state-directory name to another.
+ *
+ * Two shapes are stored, and an early version handled only the first. Attempt
+ * and workspace paths are absolute, so the directory name appears between
+ * separators. Source paths are *relative* and begin with the directory name, so
+ * a rewrite anchored on a leading separator silently skipped all of them — the
+ * rows were left pointing at a directory that no longer existed. Both forms are
+ * matched here, and the separator is still required on the trailing side so a
+ * directory merely named like the state directory is never rewritten.
+ */
+export function rewriteRecordedPaths(store: ResearchStore, from: string, to: string): number {
+  let rewritten = 0;
+  for (const [table, column] of PATH_COLUMNS) {
+    for (const separator of ["\\", "/"]) {
+      rewritten += store.db.prepare(
+        `UPDATE ${table} SET ${column} = REPLACE(${column}, ?, ?) WHERE ${column} LIKE ?`,
+      ).run(`${separator}${from}${separator}`, `${separator}${to}${separator}`,
+        `%${separator}${from}${separator}%`).changes;
+      // A relative path that starts with the directory name.
+      rewritten += store.db.prepare(
+        `UPDATE ${table} SET ${column} = ? || SUBSTR(${column}, ?) WHERE ${column} LIKE ?`,
+      ).run(`${to}${separator}`, `${from}${separator}`.length + 1,
+        `${from}${separator}%`).changes;
+    }
+  }
+  return rewritten;
+}
+
+/** Recorded paths that still point at a state directory that has been moved. */
+export function staleRecordedPaths(store: ResearchStore, from: string): number {
+  let stale = 0;
+  for (const [table, column] of PATH_COLUMNS) {
+    stale += Number((store.db.prepare(
+      `SELECT COUNT(*) n FROM ${table} WHERE ${column} LIKE ?`).get(`%${from}%`) as { n: number }).n);
+  }
+  return stale;
+}
+
 /**
  * Moves the directory, rewrites the recorded paths, and repairs the worktrees.
  * Refuses rather than half-migrating: a partial move is worse than none.
@@ -109,18 +154,7 @@ export function migrateState(projectRoot: string, options: {
   renameSync(source, target);
 
   const store = ResearchStore.open(join(target, "research.sqlite"));
-  try {
-    // The separator is part of the match so a directory merely *named* like the
-    // state directory elsewhere in a path is not rewritten.
-    for (const [table, column] of [["runs", "attempt_dir"], ["tasks", "workspace_path"],
-      ["sources", "raw_path"], ["sources", "normalized_path"]] as const) {
-      for (const separator of ["\\", "/"]) {
-        store.db.prepare(
-          `UPDATE ${table} SET ${column} = REPLACE(${column}, ?, ?) WHERE ${column} LIKE ?`,
-        ).run(`${separator}${from}${separator}`, `${separator}${to}${separator}`, `%${separator}${from}${separator}%`);
-      }
-    }
-  } finally { store.close(); }
+  try { rewriteRecordedPaths(store, from, to); } finally { store.close(); }
 
   const repaired: string[] = [];
   const repairFailures: string[] = [];

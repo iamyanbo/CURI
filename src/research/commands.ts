@@ -12,8 +12,10 @@ import {
 import { collectPreflight, preflightCachePath, preflightFacts, renderPreflightMarkdown } from "./preflight.js";
 import { buildPublishedRecord } from "./publish.js";
 import { auditPublishedRecord, machineIdentifiers } from "./trace-publish.js";
-import { stateDir } from "./paths.js";
-import { livePidFiles, migrateState, planMigration } from "./migrate-state.js";
+import { stateDir, stateDirName } from "./paths.js";
+import {
+  livePidFiles, migrateState, planMigration, rewriteRecordedPaths, staleRecordedPaths,
+} from "./migrate-state.js";
 import { publishToFirestore, serveMirror } from "./mirror.js";
 import { serveResearchDashboard } from "./server.js";
 import { RESEARCH_SCHEMA_VERSION } from "./store.js";
@@ -172,6 +174,20 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
     return;
   }
   if (action === "migrate-state") {
+    if (args.includes("--repair-paths")) {
+      // For a directory that has already been moved: rewrite any recorded path
+      // still pointing at the old name. Separate from the move so an
+      // interrupted or incomplete migration can be finished without one.
+      const from = value(args, "from") ?? ".autoresearch";
+      const store = openResearchStore(projectRoot);
+      try {
+        const before = staleRecordedPaths(store, from);
+        const rewritten = rewriteRecordedPaths(store, from, stateDirName(projectRoot));
+        console.log({ from, to: stateDirName(projectRoot), staleBefore: before,
+          rewritten, staleAfter: staleRecordedPaths(store, from) });
+      } finally { store.close(); }
+      return;
+    }
     // Renaming the state directory is a migration, not a rename: the store keeps
     // absolute attempt paths and git registers worktrees by absolute path.
     const plan = planMigration(projectRoot);

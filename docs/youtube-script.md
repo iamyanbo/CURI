@@ -1,10 +1,13 @@
-# CURI — long-form YouTube script
+# CURI — Cumulative Research & Inquiry — long-form YouTube script
 
 Target: **18–22 minutes**. Structure is seven chapters; each opens with what is on screen, then the
 spoken line. Talking points are written as prose you can read aloud or paraphrase — they are meant
 to sound like someone explaining their own work, not a narrated feature list.
 
 If you record only part of it, chapters 3, 5 and 6 are the ones that carry the video.
+
+This is a production script: every chapter should have a visible action or artefact on screen. Do
+not leave the viewer looking at a static dashboard while a paragraph of architecture is narrated.
 
 **Required disclosure** — say it in the first 30 seconds and put it in the description:
 
@@ -22,6 +25,9 @@ If you record only part of it, chapters 3, 5 and 6 are the ones that carry the v
 *On screen: the README's Research vs Benchmark Chasing table.*
 
 Open cold, no intro music:
+
+> I made this video for the purposes of entering the Google Cloud hackathon. I wanted to build an
+> autonomous research process whose output was not just a better number.
 
 > Almost every autonomous research harness I've seen is a score maximizer. It proposes a change,
 > runs the evaluator, keeps the change if the number improved, and repeats. And I want to be fair
@@ -103,6 +109,9 @@ Then the stack, briefly:
 > Firestore for the published record and Cloud Run for the public mirror. Each experiment runs in
 > its own git worktree, so an attempt can be resumed rather than restarted.
 
+> The run I am showing has four research threads and six recorded outcomes. The four headline
+> findings are a compact summary of those outcomes, not six claims of new scientific discovery.
+
 ---
 
 ## Chapter 4 — A real finding (9:00 – 12:30)
@@ -146,6 +155,9 @@ Be first to say it isn't new:
 ## Chapter 5 — What broke (12:30 – 17:00)
 
 The most valuable chapter for a technical audience. Four stories, ~60 seconds each.
+
+*On screen: show the failure or misleading output first, then the code or trace that explains it,
+and finally the fix.*
 
 **Cost accounting was off by 20×.**
 > My first accounting recorded the final model call of each turn. The console said 2M input tokens;
@@ -237,7 +249,7 @@ End on the limitations, not a call to action:
   credibility than any amount of narration about robustness.
 - **Don't stage a fast loop.** One executor attempt took 96 minutes. Say that. A demo that implies
   experiments finish in seconds invites the obvious question about how real they are.
-- **Numbers you can defend:** 51 runs, $13.44, 15.9M input tokens, 424k output, 6 outcomes (5
-  supported, 1 bounded), 7 syntheses, 38 admitted sources, 4 research threads.
+- **Numbers you can defend:** 51 runs, $13.44, 15.9M input tokens, 424k output, 6 recorded
+  outcomes (5 supported, 1 bounded), 7 syntheses, 38 admitted sources, 4 research threads.
 - **Do not claim novelty anywhere**, including the title and thumbnail. The video's credibility is
   the whole asset.
