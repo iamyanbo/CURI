@@ -4,6 +4,8 @@ import {
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
+import { stateDir, stateDirName } from "./paths.js";
+
 import { runNextExecutorTask, runOrchestratorTurn } from "./orchestrator.js";
 import {
   cancellableDelay, clearResearchStops, requestedStop, watcherStopFile,
@@ -12,7 +14,7 @@ import { startMirrorSync } from "./mirror-sync.js";
 import { ResearchStore, researchNow } from "./store.js";
 import { watcherSweep as sweep } from "./watcher.js";
 
-export function researchStateDir(projectRoot: string): string { return join(projectRoot, ".autoresearch"); }
+export function researchStateDir(projectRoot: string): string { return stateDir(projectRoot); }
 export function researchDbPath(projectRoot: string): string { return join(researchStateDir(projectRoot), "research.sqlite"); }
 export function openResearchStore(projectRoot: string): ResearchStore { return ResearchStore.open(researchDbPath(projectRoot)); }
 export function researchSupervisorFile(projectRoot: string, directionId: string): string {
@@ -49,10 +51,10 @@ export function researchDashboardStatus(projectRoot: string, directionId: string
 }
 
 export function archiveLegacyState(projectRoot: string): string | null {
-  const root = resolve(projectRoot); const state = resolve(join(root, ".autoresearch"));
-  if (relative(root, state) !== ".autoresearch") throw new Error("unexpected research state path");
+  const root = resolve(projectRoot); const state = resolve(stateDir(root));
+  if (relative(root, state) !== stateDirName(root)) throw new Error("unexpected research state path");
   if (!existsSync(state)) return null;
-  const archiveRoot = resolve(join(root, ".autoresearch-legacy"));
+  const archiveRoot = resolve(join(root, `${stateDirName(root)}-legacy`));
   mkdirSync(archiveRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const target = join(archiveRoot, stamp);

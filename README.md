@@ -360,16 +360,39 @@ Publishing is a trust boundary, so the record is narrowed rather than filtered:
   it failed, but not what it printed — that is unbounded machine output rather than research.
   `research publish --with-tool-output` includes it, redacted and checked like anything else.
 
-Trace publication is a verification, not a scrub. Text is redacted first — home paths in both slash
-directions, emails, addresses, credential shapes — and then **checked** against identifiers read
-from the running environment: the real username, hostname, home directory, and the value of every
-credential-shaped variable. A step that still contains one of those is replaced by a withheld
-marker rather than published, so a pattern the redactor fails to anticipate costs a missing step
-instead of a leak, and the gap is visible in the trace rather than silent. `AR_PUBLISH_TRACE=off`
-(or `--no-trace`) publishes the timeline alone.
-- The mirror process is isolated by its import graph — it cannot reach the SQLite store, the
-  worker or the supervisor, rejects any non-GET request, and exposes no control endpoint. Tests
-  enforce this.
+### Redaction is a gate, not a filter
+
+A redactor is a guess about what a leak looks like, and it fails silently when the guess is wrong.
+So nothing leaves the machine on the strength of a scrub alone. Publishing runs in two stages:
+
+1. **Redact.** Home paths in both slash directions, `file://` URLs, emails, IP addresses and
+   credential shapes are replaced. Drive letters are matched with a lookbehind so the `s:` in
+   `https:` is not mistaken for one — without it every cited source URL would be replaced by a
+   path marker.
+2. **Verify, then refuse.** The assembled record is walked field by field and checked against
+   identifiers read from the running environment: the real username, hostname, home directory, and
+   the value of every credential-shaped variable. **A field that still matches stops the publish.**
+   Nothing is written — not the clean documents either.
+
+Because the check runs on the *assembled* record rather than on each producer, no part of the
+system has to be trusted to have remembered to redact. A pattern the redactor fails to anticipate
+costs a refused publish, never a leak. Within a trace, a single failing step is replaced by a
+visible withheld marker instead of failing the whole record, so the gap is legible rather than
+silent. Findings name the field path and which identifier matched, never the surrounding text, so
+the log of a refusal is not itself a leak.
+
+```
+$ curi research publish --dry-run
+identifierFindings: 0
+findingPaths: []
+```
+
+That check is part of every publish, including the automatic ones — it is not an audit somebody
+has to remember to run. `AR_PUBLISH_TRACE=off` (or `--no-trace`) publishes the timeline alone.
+
+The mirror process is isolated by its import graph as well: it cannot reach the SQLite store, the
+worker or the supervisor, rejects any non-GET request, and exposes no control endpoint. Tests
+enforce this.
 
 ---
 

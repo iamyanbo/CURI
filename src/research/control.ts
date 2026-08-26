@@ -1,18 +1,20 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { statePath } from "./paths.js";
+
 export type ResearchStopMode = "now" | "after-study";
 
 export function immediateStopFile(projectRoot: string): string {
-  return join(projectRoot, ".autoresearch", "research.stop.now");
+  return statePath(projectRoot, "research.stop.now");
 }
 
 export function boundaryStopFile(projectRoot: string): string {
-  return join(projectRoot, ".autoresearch", "research.stop.after-study");
+  return statePath(projectRoot, "research.stop.after-study");
 }
 
 export function watcherStopFile(projectRoot: string): string {
-  return join(projectRoot, ".autoresearch", "research.watcher.stop");
+  return statePath(projectRoot, "research.watcher.stop");
 }
 
 export function requestResearchStop(projectRoot: string, mode: ResearchStopMode, reason: string): void {

@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { cpus, totalmem } from "node:os";
 import { join } from "node:path";
 
+import { stateDir, statePath } from "./paths.js";
+
 import { validateProcess } from "../worker/genkit-worker.js";
 
 /**
@@ -127,9 +129,9 @@ function probeInterpreter(invocation: PreflightInvocation, probeScript: string):
 }
 
 export function collectPreflight(projectRoot: string): PreflightFacts {
-  const stateDir = join(projectRoot, ".autoresearch");
-  mkdirSync(stateDir, { recursive: true });
-  const probeScript = join(stateDir, "preflight-probe.py");
+  const dir = stateDir(projectRoot);
+  mkdirSync(dir, { recursive: true });
+  const probeScript = join(dir, "preflight-probe.py");
   writeFileSync(probeScript, PROBE, "utf8");
 
   const interpreters: InterpreterFacts[] = [];
@@ -180,7 +182,7 @@ export function collectPreflight(projectRoot: string): PreflightFacts {
 }
 
 export function preflightCachePath(projectRoot: string): string {
-  return join(projectRoot, ".autoresearch", "preflight.json");
+  return statePath(projectRoot, "preflight.json");
 }
 
 /**

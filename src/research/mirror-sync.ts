@@ -17,6 +17,8 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { statePath } from "./paths.js";
+
 import { buildPublishedRecord } from "./publish.js";
 import { publishToFirestore } from "./mirror.js";
 import { ResearchStore, researchNow } from "./store.js";
@@ -51,7 +53,7 @@ export async function syncMirrorOnce(input: {
   projectRoot: string; directionId: string; databaseId?: string;
   since: number; projectId: string; log: (line: string) => void;
 }): Promise<number> {
-  const store = ResearchStore.open(join(input.projectRoot, ".autoresearch", "research.sqlite"));
+  const store = ResearchStore.open(statePath(input.projectRoot, "research.sqlite"));
   let record;
   let seq = input.since;
   try {
@@ -89,8 +91,7 @@ export function startMirrorSync(input: {
   const projectId = mirrorProjectId();
   if (!projectId) return async () => {};
 
-  const logPath = join(input.projectRoot, ".autoresearch",
-    `research-supervisor-${input.directionId}.log`);
+  const logPath = statePath(input.projectRoot, `research-supervisor-${input.directionId}.log`);
   const log = (line: string) => {
     try { appendFileSync(logPath, `${researchNow()} ${line}\n`, "utf8"); } catch { /* logging is best effort */ }
   };

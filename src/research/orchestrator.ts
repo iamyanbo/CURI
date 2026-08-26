@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
+import { statePath, stateDirName } from "./paths.js";
+
 import { diffAgainstHead, git, sha256File } from "../core/workspace.js";
 import { runProcess, runWorker } from "../worker/genkit-worker.js";
 import type { MarkdownAction, WorkerResult } from "../worker/types.js";
@@ -249,7 +251,7 @@ export async function runOrchestratorTurn(input: {
   store: ResearchStore; projectRoot: string; directionId: string; model?: string;
 }): Promise<{ runId: string; taskId: string | null; paused: boolean; result: WorkerResult }> {
   const prompt = orchestratorContext(input.store, input.directionId, input.projectRoot);
-  const attemptDir = join(input.projectRoot, ".autoresearch", "attempts", "orchestrator", input.directionId, researchId("attempt"));
+  const attemptDir = statePath(input.projectRoot, "attempts", "orchestrator", input.directionId, researchId("attempt"));
   const runId = input.store.beginRun({ directionId: input.directionId, role: "orchestrator", inputMarkdown: prompt, attemptDir });
   const systemPrompt = readFileSync(join(input.projectRoot, "prompts", "researcher.md"), "utf8");
   const actionDefs = ORCHESTRATOR_ACTIONS.map(([name, description]) => ({ name, description }));
@@ -275,7 +277,7 @@ function ensureInside(root: string, path: string): string {
 }
 
 function createTaskWorkspace(projectRoot: string, taskId: string): string {
-  const root = join(projectRoot, ".autoresearch", "worktrees");
+  const root = statePath(projectRoot, "worktrees");
   mkdirSync(root, { recursive: true });
   const workspace = join(root, taskId.replace(/[^a-z0-9_-]/gi, "_"));
   git(["worktree", "add", "-q", "--detach", workspace, "HEAD"], projectRoot);
@@ -291,7 +293,7 @@ function createTaskWorkspace(projectRoot: string, taskId: string): string {
   }
   const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
     cwd: projectRoot, encoding: "utf8", windowsHide: true,
-  }).split("\0").filter(Boolean).filter((path) => !path.startsWith(".autoresearch") && !path.startsWith("node_modules/"));
+  }).split("\0").filter(Boolean).filter((path) => !path.startsWith(stateDirName(projectRoot)) && !path.startsWith("node_modules/"));
   for (const path of untracked) {
     const source = ensureInside(projectRoot, join(projectRoot, path));
     const target = ensureInside(workspace, join(workspace, path));
@@ -319,7 +321,7 @@ function saveCommand(store: ResearchStore, input: {
 function captureArtifacts(store: ResearchStore, projectRoot: string, directionId: string, taskId: string,
   runId: string, workspace: string): void {
   const diff = diffAgainstHead(workspace);
-  const artifactRoot = join(projectRoot, ".autoresearch", "artifacts", taskId);
+  const artifactRoot = statePath(projectRoot, "artifacts", taskId);
   mkdirSync(artifactRoot, { recursive: true });
   const diffPath = join(artifactRoot, `${runId}.patch`);
   writeFileSync(diffPath, diff.diffText, "utf8");
@@ -460,7 +462,7 @@ export async function runNextExecutorTask(input: {
     renderPreflightMarkdown(preflightFacts(input.projectRoot)),
     resumeContext(workspace, priors, attempt),
   ].filter(Boolean).join("\n\n");
-  const attemptDir = join(input.projectRoot, ".autoresearch", "attempts", "executor", input.directionId, task.task_id, researchId("attempt"));
+  const attemptDir = statePath(input.projectRoot, "attempts", "executor", input.directionId, task.task_id, researchId("attempt"));
   const runId = input.store.beginRun({ directionId: input.directionId, taskId: task.task_id, role: "executor",
     inputMarkdown: prompt, attemptDir });
   const systemPrompt = readFileSync(join(input.projectRoot, "prompts", "implementation-executor.md"), "utf8");

@@ -12,6 +12,7 @@ import {
 import { collectPreflight, preflightCachePath, preflightFacts, renderPreflightMarkdown } from "./preflight.js";
 import { buildPublishedRecord } from "./publish.js";
 import { auditPublishedRecord, machineIdentifiers } from "./trace-publish.js";
+import { stateDir } from "./paths.js";
 import { publishToFirestore, serveMirror } from "./mirror.js";
 import { serveResearchDashboard } from "./server.js";
 import { RESEARCH_SCHEMA_VERSION } from "./store.js";
@@ -118,7 +119,7 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
       console.log(startWatcherDaemon({ projectRoot, directionId: id, model: value(args, "model") })); return;
     }
     if (sub === "stop") {
-      mkdirSync(resolve(projectRoot, ".autoresearch"), { recursive: true });
+      mkdirSync(stateDir(projectRoot), { recursive: true });
       writeFileSync(watcherStopFile(projectRoot), "operator requested watcher stop", "utf8"); console.log("watcher stop requested"); return;
     }
     if (sub === "configure") {
@@ -152,7 +153,7 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
     const id = directionId(projectRoot, args);
     if (action === "continuous") {
       const off = args.includes("--off");
-      mkdirSync(resolve(projectRoot, ".autoresearch"), { recursive: true });
+      mkdirSync(stateDir(projectRoot), { recursive: true });
       if (off) { if (existsSync(continuousFile(projectRoot))) unlinkSync(continuousFile(projectRoot)); }
       else writeFileSync(continuousFile(projectRoot), "enabled", "utf8");
       console.log({ continuous: continuousMode(projectRoot) });
@@ -221,7 +222,7 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
     } else if (requested !== undefined) {
       const amount = Number(requested);
       if (!Number.isFinite(amount) || amount < 0) throw new Error("budget --max must be a non-negative number");
-      mkdirSync(resolve(projectRoot, ".autoresearch"), { recursive: true });
+      mkdirSync(stateDir(projectRoot), { recursive: true });
       writeFileSync(path, `${amount}`, "utf8");
     }
     const store = openResearchStore(projectRoot);
@@ -251,14 +252,14 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
     // facts the orchestrator and executor are handed.
     const facts = args.includes("--refresh")
       ? (() => { const collected = collectPreflight(projectRoot);
-          mkdirSync(resolve(projectRoot, ".autoresearch"), { recursive: true });
+          mkdirSync(stateDir(projectRoot), { recursive: true });
           writeFileSync(preflightCachePath(projectRoot), JSON.stringify(collected, null, 2), "utf8");
           return collected; })()
       : preflightFacts(projectRoot);
     console.log(renderPreflightMarkdown(facts)); return;
   }
   if (action === "stop") {
-    mkdirSync(resolve(projectRoot, ".autoresearch"), { recursive: true });
+    mkdirSync(stateDir(projectRoot), { recursive: true });
     const reason = value(args, "reason") ?? "operator requested stop";
     requestResearchStop(projectRoot, args.includes("--now") || args.includes("--all") ? "now" : "after-study", reason);
     if (args.includes("--all")) writeFileSync(watcherStopFile(projectRoot), reason, "utf8");

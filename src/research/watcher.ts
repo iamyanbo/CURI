@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
+import { statePath } from "./paths.js";
+
 import { PROVIDERS, type Lead } from "../scout.js";
 import { assertPublicUrl, runWorker } from "../worker/genkit-worker.js";
 import { requestedStop, watcherStopFile } from "./control.js";
@@ -186,7 +188,7 @@ export async function readNextResearchSources(store: ResearchStore, projectRoot:
   ).all(directionId, limit) as LeanSource[];
   const direction = store.direction(directionId);
   if (!direction) throw new Error(`unknown direction ${directionId}`);
-  const sourceRoot = join(projectRoot, ".autoresearch", "sources", directionId);
+  const sourceRoot = statePath(projectRoot, "sources", directionId);
   mkdirSync(sourceRoot, { recursive: true });
   const systemPrompt = readFileSync(join(projectRoot, "prompts", "watcher.md"), "utf8");
   const context = store.context(directionId);
@@ -222,7 +224,7 @@ export async function readNextResearchSources(store: ResearchStore, projectRoot:
       `# Source\nID: ${source.source_id}\nTitle: ${source.title}\nURL: ${source.canonical_url}`,
       `# Retrieved source text\n${inline}`,
     ].join("\n\n");
-    const attemptDir = join(projectRoot, ".autoresearch", "attempts", "watcher", directionId,
+    const attemptDir = statePath(projectRoot, "attempts", "watcher", directionId,
       source.source_id, researchId("attempt"));
     const runId = store.beginRun({ directionId, role: "watcher", inputMarkdown: prompt, attemptDir });
     const actions = [
