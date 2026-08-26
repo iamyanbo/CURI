@@ -13,6 +13,7 @@ import { collectPreflight, preflightCachePath, preflightFacts, renderPreflightMa
 import { buildPublishedRecord } from "./publish.js";
 import { auditPublishedRecord, machineIdentifiers } from "./trace-publish.js";
 import { stateDir } from "./paths.js";
+import { livePidFiles, migrateState, planMigration } from "./migrate-state.js";
 import { publishToFirestore, serveMirror } from "./mirror.js";
 import { serveResearchDashboard } from "./server.js";
 import { RESEARCH_SCHEMA_VERSION } from "./store.js";
@@ -168,6 +169,17 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
         value(args, "reason") ?? "Operator resumed the direction.");
     } finally { store.close(); }
     console.log(startResearchSupervisor({ projectRoot, directionId: id, model: value(args, "model") }));
+    return;
+  }
+  if (action === "migrate-state") {
+    // Renaming the state directory is a migration, not a rename: the store keeps
+    // absolute attempt paths and git registers worktrees by absolute path.
+    const plan = planMigration(projectRoot);
+    if (args.includes("--dry-run")) {
+      console.log({ ...plan, live: livePidFiles(projectRoot, plan.from) });
+      return;
+    }
+    console.log(migrateState(projectRoot));
     return;
   }
   if (action === "publish") {
