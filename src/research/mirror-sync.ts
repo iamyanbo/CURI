@@ -57,7 +57,9 @@ export async function syncMirrorOnce(input: {
   try {
     seq = latestEventSeq(store, input.directionId);
     if (seq <= input.since) return input.since;
-    record = buildPublishedRecord(store, input.directionId, input.projectRoot);
+    record = buildPublishedRecord(store, input.directionId, input.projectRoot,
+      { includeToolOutput: (process.env.AR_PUBLISH_TOOL_OUTPUT ?? "").trim() === "1",
+        includeTrace: (process.env.AR_PUBLISH_TRACE ?? "").trim().toLowerCase() !== "off" });
   } catch (error) {
     input.log(`mirror sync could not build the record: ${String(error)}`);
     return input.since;

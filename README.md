@@ -1,27 +1,26 @@
-# Lean Research Runtime
 
-An autonomous research runtime for accumulating **understanding**, not scores.
+
+
+# CURI — Cumulative Research & Inquiry
 
 ## Abstract
 
 The current wave of harness development and “autoresearch” pipelines has largely been designed to
 maximize benchmark scores: propose a change, run the evaluator, keep it if the number improves,
-and repeat.
-That is a reasonable engineering loop when the benchmark is the specification. It is a poor
-motivation for research. It invites Goodhart’s law — once a measure becomes a target, it ceases to
-be a good measure — because a system can learn to improve the measurement without improving the
-thing the measurement was meant to represent.
+and repeat. While this is a reasonable engineering loop when the benchmark is the specification. It is a poor
+motivation for research. It invites Goodhart’s law: once a measure becomes a target, it ceases to
+be a good measure. In practice, these pipelines often devolve into hyperparameter optimization. For the most part, I view this as an irresponsible use of an LLM's capabilities, since well-established algorithms already exist for tuning hyperparameters.
 
-This project starts from that concern. Lean Research Runtime is a pure research direction: an
+This project starts from that motivation. CURI takes a pure research direction: an
 attempt to build an autonomous system whose basic unit is not a score improvement but an
 investigation. It starts with a question and competing explanations, uses experiments as evidence,
 records what the evidence supports or rules out, and leaves every result bounded by the conditions
 actually tested. A negative, bounded or inconclusive result is still a finding. The aim is a
-cumulative research record that becomes clearer and more useful over time, not a leaderboard.
+cumulative research record that becomes clearer and more useful over time.
 
-The project is inspired by Terence Tao’s [*Mathematics in the age of AI*](https://arxiv.org/abs/2608.16753).
-Tao’s argument is to look beyond the capabilities question — whether AI can perform research-level
-tasks — and ask what goals and values research should preserve when those capabilities arrive. We
+This project is also partly inspired by Terence Tao’s essay [*Mathematics in the age of AI*](https://arxiv.org/abs/2608.16753).
+Tao’s argument is to look beyond the capabilities question of whether AI can perform research-level
+tasks, and ask what goals and values research should preserve when those capabilities arrive. We
 follow that philosophy here. The runtime makes those values operational: research questions are
 anchored in prior evidence; competing explanations are kept visible; claims stay within their
 evidence; decisive checks are independently rerun; and the system is allowed to stop when more
@@ -97,66 +96,71 @@ into a synthesis that later evidence can supersede.
 
 ---
 
-## What makes it research rather than hill climbing
+## Research vs Benchmark Chasing
 
-These are enforced, not aspirational:
+An optimization loop can be useful when its objective is the specification. Research is different:
+the goal is not simply to produce a larger number, but to learn something that survives scrutiny.
+The runtime encodes that distinction in its control flow and research record:
 
 | Mechanism | Enforcement |
 |---|---|
-| No global score or incumbent | Nothing in the scheduler reads a metric; tasks are chosen from unresolved questions |
-| Every task is anchored to evidence | A brief citing no existing `COMP`/`OUT`/`SRC`/`SYN` identifier is **refused** once the direction holds any evidence |
-| No silent repetition | A brief ≥75% identical to an earlier task is **refused** unless it names that task and says which explanation the difference discriminates |
-| Claims stay inside their evidence | Every outcome must state its envelope — models, context lengths, hardware, sample size, untested regimes |
-| Negative results are findings | `refuted`, `bounded` and `inconclusive` are terminal research outcomes, not errors |
-| Understanding accumulates | Syntheses attach to research threads and supersede one another; every revision stays tentative and is replaced only by better evidence |
-| The agent may stop | The orchestrator can pause a direction when it judges a milestone reached, instead of manufacturing work |
+| No leaderboard or incumbent | The scheduler does not read a score; it chooses tasks from unresolved questions |
+| Every task is anchored in evidence | Once a direction has evidence, a brief with no existing `COMP`/`OUT`/`SRC`/`SYN` identifier is **refused** |
+| Repeated work must explain itself | A brief ≥75% identical to an earlier task is **refused** unless it names that task and explains which question the new experiment addresses |
+| Claims stay within their evidence | Every outcome states its envelope — models, context lengths, hardware, sample size and untested regimes |
+| Negative results still count | `refuted`, `bounded` and `inconclusive` are terminal research outcomes, not errors |
+| Understanding accumulates | Syntheses attach to research threads and can be superseded by better evidence; no synthesis is treated as final |
+| Stopping is a valid result | The orchestrator can pause a direction when it judges a milestone reached instead of manufacturing work |
 
-Refusals are not silent: they are written back as runtime feedback and appear in the
-orchestrator's next context, so a bad move gets corrected rather than repeated.
+These checks are part of the record. A refusal is returned as runtime feedback and appears in the
+orchestrator’s next context, so an unproductive move can be corrected rather than repeated.
 
 ---
 
-## Running continuously without busy work
+## Continuous research without busywork
 
-The orchestrator does research when there is something to research, and costs
-almost nothing when there is not. That is a property of the runtime, not an
-instruction to the model: no prompt tells it to keep going, and `pause_research`
-remains a move it can choose at any time.
+An autonomous research process should not stay active for appearance’s sake. If there is no good
+next question, the right action is to wait or stop, rather than invent a task (also for the sake of token expenditure).
 
-Work runs while work exists — a queued task goes to the executor, otherwise the
-orchestrator takes a turn. The supervisor only has to decide anything when the
-loop comes back with nothing:
+The runtime therefore runs when there is a question or new evidence to consider, and becomes almost idle when
+there is neither. This is a property of the runtime, not an instruction in the prompt: no prompt
+tells the model to keep going, and `pause_research` remains an available outcome at any time.
+
+The orchestrator is the research decision-maker: it asks questions, delegates experiments and
+interprets results. The supervisor is the outer runtime loop: it schedules the other roles,
+enforces stops and spend limits, and decides whether the process should wait, exit or resume.
+On each iteration, a queued task goes to the executor; when there is no queued task, the supervisor
+gives the orchestrator one turn. After that turn returns without a new task, the supervisor follows
+the state of the run:
 
 | the loop returned | what the supervisor does |
 |---|---|
 | operator stop, or the spend ceiling was reached | exit |
 | the orchestrator paused, continuous mode off | exit; the pause stands |
-| the orchestrator paused, continuous mode on | take the direction up again, then wait |
+| the orchestrator paused, continuous mode on | resume the direction after waiting |
 | nothing delegated this turn | wait |
 
-A pause and an idle turn are the same signal — nothing is worth doing right now —
-so both wait on the same curve, doubling from one minute to a thirty-minute
-ceiling:
+A pause and an idle turn carry the same signal: nothing is worth doing right now. Both use the same
+backoff curve, doubling from one minute to a thirty-minute ceiling:
 
 ```
 1 → 2 → 4 → 8 → 16 → 30 minutes, then capped
 ```
 
-**The wait resets to one minute the moment anything happens in the direction**: a
-source admitted, a task delegated or returned, an outcome recorded, a synthesis
-written, a delegation refused. Ten quiet hours therefore cost about two dozen
-orchestrator turns rather than a paid poll every few seconds.
+**The wait resets to one minute as soon as anything happens in the direction**: a source is
+admitted, a task is delegated or returned, an outcome is recorded, a synthesis is written, or a
+delegation is refused. Ten quiet hours therefore cost about two dozen orchestrator turns rather
+than a paid poll every few seconds.
 
-In practice the watcher becomes the metronome. When the orchestrator has
-exhausted its current questions it pauses, is taken up again, pauses again, and
-the interval stretches to half an hour. Then the watcher admits a paper, that
-appends an event, the wait snaps back to a minute, and the orchestrator wakes to
-weigh the new evidence. **Research resumes because evidence arrived, not because
-a timer fired.**
+In practice, the watcher becomes a source of wake-ups rather than a polling timer. When the
+orchestrator exhausts its current questions, it pauses, is taken up again, pauses again, and the
+interval stretches to half an hour. When the watcher admits a paper, it appends an event, the wait
+snaps back to a minute, and the orchestrator wakes to weigh the new evidence. **Research resumes
+because evidence arrived, not because a timer fired.**
 
-Continuous mode is a deployment choice made outside the model — `research
-continuous` to enable, `--off` to make a pause final. Either way the pause and
-the reasoning behind it stay in the record.
+Continuous mode is controlled outside the model: use `research continuous` to enable it and
+`--off` to make a pause final. Either way, the pause and the reasoning behind it remain in the
+record.
 
 ---
 
@@ -191,9 +195,11 @@ the reasoning behind it stay in the record.
 
 ## Data sources
 
-The watcher retrieves from **arXiv**, **GitHub** and **Hacker News** directly — the model never
-performs retrieval itself. Each source is read and judged for relevance before admission, and
-admitted sources are cited by identifier in the briefs and syntheses that use them.
+The current watcher retrieves from **arXiv**, **GitHub** and **Hacker News** directly — the model
+never performs retrieval itself. Each source is read and judged for relevance before admission, and
+admitted sources are cited by identifier in the briefs and syntheses that use them. Other domains
+may need different sources or source adapters; the research loop does not depend on this particular
+set of sources.
 
 ---
 
@@ -204,12 +210,21 @@ Nothing about the research loop needs a cloud account. The Google Cloud pieces �
 record and its public mirror — are an optional layer on top, and everything below works without
 them.
 
+The runtime is intended to be reusable across research domains. The core loop handles questions,
+evidence, delegation, execution and synthesis; a domain supplies the experiment-specific contract,
+such as its data, evaluator, replication policy and resource requirements. The attention domain is
+the example we tested end to end, so the findings later in this document should not be read as
+evidence that every other domain has already been validated.
+
 ### Prerequisites
 
 - Node.js 22+ and git
 - An API key from any one supported provider
 - Python 3.10 with PyTorch for GPU experiments — optional, and only for experiments that measure
   models on hardware. Directions that are analytical or source-driven do not need it.
+
+These are the runtime prerequisites. An individual domain may add its own requirements, such as
+datasets, packages, compilers, hardware or time-indexed data.
 
 ### Configure a provider
 
@@ -252,6 +267,13 @@ npx tsx src/cli.ts research watch start             # literature intake
 npx tsx src/cli.ts research dashboard start --port 7331
 ```
 
+The example above uses the included attention domain, which is also the domain used for the findings
+described later in this document. To investigate another domain, provide its own domain contract
+and adjust the direction brief, topic, data and environment accordingly. The core loop is intended
+to be reusable across domains, but each domain still needs an evaluator and replication policy that
+are appropriate to its claims; loading a domain file is not by itself evidence that the domain has
+been scientifically validated.
+
 Open http://127.0.0.1:7331. Useful controls:
 
 ```bash
@@ -281,18 +303,12 @@ npx tsx src/cli.ts research publish --project $PROJECT
 gcloud builds submit --config cloudbuild.mirror.yaml --project $PROJECT
 ```
 
-Set `GOOGLE_CLOUD_PROJECT` (or `AR_PUBLISH_PROJECT`) in `.env` and the supervisor republishes the
-record itself, so the mirror follows the live run instead of freezing at the last manual publish.
-It only writes when an event has actually been appended, so a quiet direction costs nothing, and a
-Firestore failure is logged and retried rather than ending the run. `AR_MIRROR_SYNC_SECONDS`
-changes the interval (default 120, floor 30); `AR_MIRROR_SYNC=off` disables it.
-
 ### Why experiments run on local hardware
 
 Experiments execute on whatever GPU the machine has, not on a cloud accelerator. That was a
 deliberate cost decision rather than a missing feature: the measured bottleneck in this system is
-model latency, not device throughput — 3442s of tool time against 5695s waiting on the model, with
-the local GPU at 33% utilisation — so renting an accelerator would have consumed a limited credit
+model latency, not device throughput: 3442s of tool time against 5695s waiting on the model, with
+the local GPU at 33% utilization. So renting an accelerator would have consumed a limited credit
 grant to keep a faster card idle for two thirds of the run. The credits went to the model calls
 that were actually the constraint.
 
@@ -305,7 +321,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 79 tests
+npm test        # 89 tests
 npm run typecheck
 ```
 
@@ -335,10 +351,22 @@ under `pi-extension/legacy-harness/` and is not reachable from this codebase.
 Publishing is a trust boundary, so the record is narrowed rather than filtered:
 
 - **Published:** findings, verdicts, syntheses and their provenance, task briefs, run metadata,
-  the verified checks and their exit codes, admitted sources.
-- **Never published:** agent prompts, execution traces, worktree contents, the environment sheet,
-  and any local filesystem path. Prompts embed the preflight sheet and worktree paths, so they are
-  omitted entirely rather than scrubbed; everything else passes through a redactor.
+  the verified checks and their exit codes, admitted sources, and the agent traces — the reasoning
+  and the code each agent wrote.
+- **Never published:** agent prompts, worktree contents, the environment sheet, and any local
+  filesystem path. Prompts embed the preflight sheet and worktree paths, so they are omitted
+  entirely rather than scrubbed.
+- **Withheld by default:** tool *output*. A trace step records how much a check printed and whether
+  it failed, but not what it printed — that is unbounded machine output rather than research.
+  `research publish --with-tool-output` includes it, redacted and checked like anything else.
+
+Trace publication is a verification, not a scrub. Text is redacted first — home paths in both slash
+directions, emails, addresses, credential shapes — and then **checked** against identifiers read
+from the running environment: the real username, hostname, home directory, and the value of every
+credential-shaped variable. A step that still contains one of those is replaced by a withheld
+marker rather than published, so a pattern the redactor fails to anticipate costs a missing step
+instead of a leak, and the gap is visible in the trace rather than silent. `AR_PUBLISH_TRACE=off`
+(or `--no-trace`) publishes the timeline alone.
 - The mirror process is isolated by its import graph — it cannot reach the SQLite store, the
   worker or the supervisor, rejects any non-GET request, and exposes no control endpoint. Tests
   enforce this.
@@ -347,10 +375,12 @@ Publishing is a trust boundary, so the record is narrowed rather than filtered:
 
 ## Findings and learnings
 
-### What the system found
+The results in this section come from the attention/KV-cache example. Running it on a single RTX
+3060 Ti produced four findings across four research threads, then paused after judging that it had
+reached a milestone. These are bounded results from one example domain, not general claims about
+AI systems or research in general.
 
-Running on a single RTX 3060 Ti, it produced four findings across four threads and then paused
-itself, judging a milestone reached:
+### Results from the example run
 
 - **Heuristic KV-cache eviction is causally blind to unasked questions** (`bounded`). H2O's
   cumulative-attention retention scored **0% on non-local needle retrieval at 50% cache budget —
@@ -367,18 +397,19 @@ itself, judging a milestone reached:
 - **A regime dispatcher composing all three** (`supported`) — an integration task, not another
   sweep.
 
-### Are these findings novel?
+### How to interpret these results
 
-Mostly not, and the record should say so plainly. Three of the four re-derive results that already
-exist in the literature: the causal blindness of attention-mass eviction is the failure mode
-StreamingLLM and later needle-retrieval work describe for H2O-style policies; the speculative
-decoding result is the standard acceptance-rate/latency crossover inequality, arrived at from
-measurement rather than from the algebra; and the K/V asymmetry is the finding KIVI reports and
-builds its per-channel key quantization on. The dispatcher that composes them is an integration,
-not a new mechanism.
+These should not be presented as novel discoveries. Three of the four reproduce results that
+already exist in the literature: the causal blindness of attention-mass eviction is the failure
+mode StreamingLLM and later needle-retrieval work describe for H2O-style policies; the speculative
+decoding result is the standard acceptance-rate/latency crossover inequality, reached through
+measurement rather than algebra; and the K/V asymmetry is the finding KIVI reports and uses to
+motivate per-channel key quantization. The dispatcher that composes them is an integration, not a
+new mechanism.
 
-That is an honest description of a system that had a consumer GPU and a few days. What is
-*not* replication is how the findings were reached and what they cost to reach:
+That is the honest result of a system running on a consumer GPU over a few days. The value of the
+run is not novelty; it is the transparent, independently checked process by which the findings were
+reached and the fact that the record preserves what the experiments cost:
 
 - They were **independently re-derived**, not retrieved. The eviction result came out of a design
   that included a random-eviction control, which is why "0% at 50% budget" is a claim about the
@@ -390,31 +421,30 @@ That is an honest description of a system that had a consumer GPU and a few days
   a healthy acceptance rate — and it survived into the record instead of being discarded as a
   failed run.
 
-The contribution this repository actually claims is the **system**, not the four findings: a
-delegation gate that mechanically refuses untethered and near-duplicate briefs, syntheses that
-accumulate and are superseded rather than overwritten, honest per-call cost metering, and an agent
-that is allowed to stop when it has nothing worth asking. Whether that machinery can produce a
-finding that is *not* in the literature is an open question about scale, and the limitations below
-are the reason it has not been tested yet.
+The contribution this repository claims is the **research process**, not the four findings: a
+delegation gate that refuses untethered and near-duplicate briefs, syntheses that accumulate and
+can be superseded rather than overwritten, per-call cost accounting, and an agent that is allowed
+to stop when it has nothing worth asking. Whether this process can produce a finding that is *not*
+already in the literature remains an open question about scale.
 
-### What we learned building it
+### Lessons from building the runtime
 
-- **The bottleneck was never the GPU.** Measured: 3442s of tool time against 5695s waiting on the
-  model, with the GPU at 33% utilisation. More compute buys *scope*, not speed.
-- **Measuring cost is not the same as billing it.** Recording only the final model call
-  undercounted input tokens **20×** and output **90×**, because a tool loop re-sends the whole
-  conversation each turn and reasoning tokens arrive in a separate field.
-- **Interruption is the normal case.** Provider errors, operator stops and preemption all happen;
-  the runtime treats an interrupted attempt as work to resume rather than work to discard, and does
-  not charge it against the attempt budget.
-- **A refusal must explain itself.** Feedback written where nobody reads it is the same as no
-  feedback: a refused delegation is surfaced in the orchestrator's next context rather than
-  discarded.
-- **Verdict language drifts optimistic.** Left unconstrained, the orchestrator wrote "proved" and
-  "established" from n=3 on a 0.5B model. Outcomes must now state the envelope their evidence
-  covers, and `supported` is reserved for claims whose falsifier was actually tested.
+- **Model latency, not GPU throughput, was the bottleneck.** The run measured 3442 seconds of tool
+  time against 5695 seconds waiting on the model, with the GPU at 33% utilisation. More compute buys
+  *scope*, not speed.
+- **Cost accounting has to cover the whole interaction.** Recording only the final model call
+  undercounted input tokens **20×** and output **90×**, because a tool loop resends the conversation
+  each turn and reasoning tokens arrive in a separate field.
+- **Interruption is part of normal operation.** Provider errors, operator stops and preemption all
+  happen. An interrupted attempt should be resumed rather than discarded, without charging it
+  against the attempt budget.
+- **A refusal has to explain itself.** Feedback is useful only if the orchestrator sees it; refused
+  delegations are therefore surfaced in its next context rather than discarded.
+- **Evidence needs calibrated language.** Left unconstrained, the orchestrator wrote "proved" and
+  "established" from n=3 on a 0.5B model. Outcomes must state the envelope their evidence covers,
+  and `supported` is reserved for claims whose falsifier was actually tested.
 
-### Honest limitations
+### Limits of the current evidence
 
 - Findings are bounded to 0.5B–1.5B models at ≤4096 context on one consumer GPU. That is
   *simulated* memory pressure, not the long-context regime the direction ultimately targets.
@@ -423,5 +453,7 @@ are the reason it has not been tested yet.
 - The eviction study measures the symptom, not the mechanism: it does not record whether the needle
   token survived eviction, so "evicted it" and "kept it but could not use it" remain
   undistinguished.
+- The runtime is intended to support other domains, but this end-to-end campaign tested only the
+  attention example. Other domains require their own evaluator, replication policy and domain review.
 - The research loop runs locally because it needs a GPU and a persistent filesystem; only the
   record and its mirror are hosted.

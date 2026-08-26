@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Entry point for the lean research runtime.
+ * Entry point for CURI — Cumulative Research & Inquiry.
  *
  * Everything the system does is a `research` subcommand; `doctor` reports
  * whether this machine is configured to run one. The previous architecture — a
@@ -22,7 +22,7 @@ const PROJECT_ROOT = process.cwd();
 
 function usage(): void {
   console.log([
-    "lean research runtime",
+    "CURI — Cumulative Research & Inquiry",
     "",
     "  cli.ts research init --direction ID --title TEXT --brief MARKDOWN --domain PATH",
     "                       [--fixed TEXT] [--open TEXT] [--topic TEXT] [--watch-every SECONDS]",

@@ -1,4 +1,4 @@
-# Lean research runtime (v7)
+# CURI research runtime (v7)
 
 ## Commands
 

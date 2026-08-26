@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Lean Research Runtime</title>
+<title>CURI — Cumulative Research &amp; Inquiry</title>
 <link rel="stylesheet" href="/vendor/katex.css">
 <style>
 :root{
@@ -215,7 +215,7 @@ details summary{cursor:pointer;font:11px var(--mono);color:var(--text-3);padding
 </style></head><body>
 <header>
   <div class="topbar">
-    <div class="brand"><h1 id="title">Lean Research Runtime</h1><div id="subtitle" class="t-meta"></div></div>
+    <div class="brand"><h1 id="title">CURI</h1><div id="subtitle" class="t-meta">Cumulative Research &amp; Inquiry</div></div>
     <div class="statline" id="headstats"></div>
     <button id="pause" class="chip on">live</button>
   </div>
@@ -813,9 +813,9 @@ function traceView(l){
   q.oninput=()=>{traceQuery=q.value.toLowerCase();traceView(l);
     const again=$('#tracebar').querySelector('#tq');if(again){again.focus();again.setSelectionRange(again.value.length,again.value.length)}};
   if(!l){host.innerHTML='<div class="empty">Select a run in the piano roll.</div>';$('#trace-note').textContent='';return}
-  if(S&&S.published){
-    // Traces carry prompts, file paths and command output from the machine that
-    // ran the work, so they are deliberately not part of a published record.
+  if(S&&S.published&&!arr(l.trace).length){
+    // Reached only when a run has no publishable steps: an attempt whose trace
+    // was never written, or one whose every step was withheld.
     const b=l.breakdown||{};
     $('#trace-note').textContent=l.role+' · '+l.state;
     host.innerHTML='<div class="step" style="grid-template-columns:1fr"><div>'
@@ -824,14 +824,17 @@ function traceView(l){
       +'<span class="tag tool_result">model '+fmt(b.model||0)+'</span>'
       +'<span class="tag">waiting '+fmt(b.waiting||0)+'</span>'
       +(b.errors?'<span class="tag err">'+b.errors+' errors</span>':'')+'</div></div>'
-      +'<div class="empty">The timeline of this run is published, its transcript is not.<br>'
-      +'Agent traces contain prompts, file paths and command output from the machine that ran the work, '
-      +'so they stay on that machine. The piano roll on the left is drawn from the published timing.</div>';
+      +'<div class="empty">No trace steps were published for this run.<br>'
+      +'Its timing is published, and the piano roll on the left is drawn from it.</div>';
     return;
   }
-  const hb=l.heartbeat,b=l.breakdown||{},detail=runDetail.get(l.id);loadRun(l.id,l.traceTotal);
+  const hb=l.heartbeat,b=l.breakdown||{},detail=runDetail.get(l.id);
+  if(!(S&&S.published))loadRun(l.id,l.traceTotal);
+  const withheld=Number(l.traceWithheld||0);
   $('#trace-note').textContent=l.role+' · '+l.state+' · '+(l.traceTotal||0)+' steps'
-    +(hb?' · '+(hb.phase||'')+' · observed '+ago(hb.observedAt):'')+(detail?'':' · loading');
+    +(withheld?' · '+withheld+' withheld':'')
+    +(hb?' · '+(hb.phase||'')+' · observed '+ago(hb.observedAt):'')
+    +(detail||S&&S.published?'':' · loading');
   const durations=new Map(arr(detail?detail.segments:l.segments).map(s=>[s.seq,s]));
   const all=detail&&arr(detail.trace).length?detail.trace:arr(l.trace);
   const steps=all.filter(stepMatches);
@@ -849,7 +852,7 @@ function traceView(l){
       return `<div class="step ${s.isError?'error':''} ${selSeq===s.seq?'sel':''}" data-step="${esc(s.seq)}">
         <div class="when"><b>${fmt(s.atMs||0)}</b>${seg&&s.kind==='tool_call'?fmt(seg.endMs-seg.startMs):''}</div>
         <div><div class="line"><span class="tag ${s.isError?'err':esc(s.kind)}">${esc(s.kind)}</span>
-          ${s.toolName?`<span class="tag">${esc(s.toolName)}</span>`:''}${esc(String(s.content??'').slice(0,240))}</div>
+          ${s.toolName?`<span class="tag">${esc(s.toolName)}</span>`:''}${s.withheld?`<span class="tag err">${s.withheld==='tool-output'?'output not published':'withheld'}</span>`:''}${esc(String(s.content??'').slice(0,240))}</div>
           ${long?`<div><span class="chip" data-expand="${esc(s.seq)}" style="padding:2px 8px;font-size:11px">${open?'hide':'detail'}</span>`
             +(open?`<pre>${esc(s.content)}</pre>`+(s.rawContent?`<details open><summary>Raw internal event</summary><pre>${esc(s.rawContent)}</pre></details>`:''):'')+'</div>':''}
         </div></div>`}).join('')

@@ -1,4 +1,5 @@
 import { readTraceSteps, traceBreakdown, traceSegments } from "./trace.js";
+import { chunkTraceSteps, machineIdentifiers, publishableTrace } from "./trace-publish.js";
 import { ResearchStore } from "./store.js";
 
 /**
@@ -10,6 +11,12 @@ import { ResearchStore } from "./store.js";
  * worktree paths and interpreter locations, all of which carry the operator's
  * username and filesystem layout, so prompts, traces and workspace contents are
  * left out entirely rather than trimmed.
+ *
+ * Trace steps are published, because the reasoning and the code an agent wrote
+ * are the research. They go through `trace-publish`, which redacts and then
+ * verifies against identifiers read from the running environment, withholding
+ * any step that still matches. Tool output is withheld unless explicitly asked
+ * for: it is unbounded machine output rather than research.
  *
  * The record is split by entity because Firestore caps a document at 1 MB and a
  * single direction already exceeds that once sources and runs are included.
@@ -34,14 +41,17 @@ export interface PublishedRecord {
   syntheses: Array<Record<string, unknown>>;
   sources: Array<Record<string, unknown>>;
   runs: Array<Record<string, unknown>>;
+  traceSteps: Array<Record<string, unknown>>;
   commands: Array<Record<string, unknown>>;
   spend: Record<string, number>;
   publishedAt: string;
 }
 
 export function buildPublishedRecord(store: ResearchStore, directionId: string,
-  projectRoot = process.cwd()): PublishedRecord {
+  projectRoot = process.cwd(), options: { includeToolOutput?: boolean; includeTrace?: boolean } = {}): PublishedRecord {
   const context = store.context(directionId);
+  const identifiers = machineIdentifiers();
+  const traceChunks: Array<Record<string, unknown>> = [];
   const reviewFor = (synthesisId: unknown) =>
     context.synthesisReviews.find((item) => item.synthesis_id === synthesisId) ?? null;
 
@@ -98,16 +108,25 @@ export function buildPublishedRecord(store: ResearchStore, directionId: string,
       // The timing shape is published; the trace text is not. A segment carries
       // a tool name, an interval and an error flag — no arguments, no output and
       // no path — so the timeline can be shown without publishing what ran where.
-      const segments = traceSegments(readTraceSteps(projectRoot, item.attempt_dir), durationMs)
+      const steps = readTraceSteps(projectRoot, item.attempt_dir);
+      // Trace publishing can be turned off wholesale, for an operator who
+      // would rather publish only the timeline.
+      const published = options.includeTrace === false ? []
+        : publishableTrace(steps, { identifiers, includeToolOutput: options.includeToolOutput });
+      traceChunks.push(...chunkTraceSteps(String(item.run_id), published));
+      const segments = traceSegments(steps, durationMs)
         .map(({ kind, label, startMs, endMs, isError }) => ({ kind, label, startMs, endMs, isError }));
       return {
         run_id: item.run_id, task_id: item.task_id, role: item.role, state: item.state,
         failure: item.failure, model: item.model, provider: item.provider,
         input_tokens: item.input_tokens, output_tokens: item.output_tokens, cost_usd: item.cost_usd,
         started_at: item.started_at, completed_at: item.completed_at,
+        trace_steps: published.length,
+        trace_withheld: published.filter((step) => step.withheld).length,
         segments, breakdown: traceBreakdown(segments as never, durationMs),
       };
     }),
+    traceSteps: traceChunks,
     // The independent verification is the evidence, so the command and its exit
     // code are published; its output may quote local paths, so it is redacted.
     commands: context.commands.map((item) => ({

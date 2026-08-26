@@ -126,7 +126,7 @@ export async function fetchArxiv(query: string, max: number): Promise<Lead[]> {
     + `?search_query=${encodeURIComponent(query)}`
     + `&sortBy=submittedDate&sortOrder=descending&max_results=${max}`;
 
-  const res = await fetch(url, { headers: { "User-Agent": "adversarial-autoresearch/0.1" } });
+  const res = await fetch(url, { headers: { "User-Agent": "curi-research/0.1" } });
   if (!res.ok) throw new Error(`arXiv returned ${res.status}`);
   const xml = await res.text();
 
@@ -159,7 +159,7 @@ export const githubProvider: Provider = {
   id: "github",
   async fetch(query: string, max: number): Promise<Lead[]> {
     const headers: Record<string, string> = {
-      "User-Agent": "adversarial-autoresearch/0.1",
+      "User-Agent": "curi-research/0.1",
       Accept: "application/vnd.github+json",
     };
     if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
@@ -189,7 +189,7 @@ export const hackerNewsProvider: Provider = {
   async fetch(query: string, max: number): Promise<Lead[]> {
     const url = "https://hn.algolia.com/api/v1/search_by_date"
       + `?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=${max}`;
-    const res = await fetch(url, { headers: { "User-Agent": "adversarial-autoresearch/0.1" } });
+    const res = await fetch(url, { headers: { "User-Agent": "curi-research/0.1" } });
     if (!res.ok) throw new Error(`hn returned ${res.status}`);
     const body = await res.json() as { hits?: Array<Record<string, any>> };
 

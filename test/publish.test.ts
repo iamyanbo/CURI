@@ -138,9 +138,9 @@ test("several runs of one task keep distinct published identities", () => {
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
-test("published run timing carries shape but no content", () => {
-  // The piano roll needs intervals, not transcripts. A segment may name the tool
-  // that ran; it must never carry its arguments, its output or a path.
+test("a published run carries its trace but not the machine", () => {
+  // Reasoning and the code the agent wrote are research and are published; the
+  // operator's paths and the tool's output are not.
   const { root, store } = fixture();
   try {
     const taskId = store.delegateTask({ directionId: "direction", mode: "exploration", markdown: "# Study" });
@@ -163,11 +163,29 @@ test("published run timing carries shape but no content", () => {
     assert.equal(run.segments[0].label, "run");
     assert.equal(run.segments[0].endMs - run.segments[0].startMs, 3000);
     assert.equal(run.breakdown.toolCalls, 1);
-    // No transcript, and nothing naming the machine.
+
+    // The trace is published now, but the machine is not: the home path is
+    // redacted out of the tool call, and the tool's output is withheld.
+    const steps = record.traceSteps.flatMap((chunk) => chunk.steps as Array<Record<string, any>>);
+    assert.equal(steps.length, 2);
+    assert.equal(steps[0]!.kind, "tool_call");
+    assert.match(steps[0]!.content, /<workspace>/);
+    assert.equal(steps[1]!.withheld, "tool-output");
+    assert.doesNotMatch(steps[1]!.content, /stdout/);
+
     const json = JSON.stringify(record);
     assert.equal(json.includes("yanbo"), false);
-    assert.equal(json.includes("secret.py"), false);
     assert.equal(json.includes("stdout"), false);
-    assert.equal("trace" in run, false);
+
+    // Asking for tool output publishes it, still redacted.
+    const withOutput = buildPublishedRecord(store, "direction", root, { includeToolOutput: true });
+    const openSteps = withOutput.traceSteps.flatMap((chunk) => chunk.steps as Array<Record<string, any>>);
+    assert.match(openSteps[1]!.content, /stdout mentioning <workspace>/);
+    assert.equal(JSON.stringify(withOutput).includes("yanbo"), false);
+
+    // And the timeline can be published on its own.
+    const timingOnly = buildPublishedRecord(store, "direction", root, { includeTrace: false });
+    assert.equal(timingOnly.traceSteps.length, 0);
+    assert.equal((timingOnly.runs[0] as Record<string, any>).segments.length, 1);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });

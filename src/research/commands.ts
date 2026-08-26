@@ -34,7 +34,7 @@ function directionId(projectRoot: string, args: string[]): string {
 }
 function usage(): void {
   console.log([
-    "lean research runtime:",
+    "CURI — Cumulative Research & Inquiry:",
     "  research reset --archive",
     "  research init --direction ID --title TEXT --brief MARKDOWN --domain PATH [--fixed TEXT] [--open TEXT] [--topic TEXT]",
     "  research run|turn [--direction ID] [--model MODEL] [--resume] [--no-watch]",
@@ -175,7 +175,11 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
     const id = directionId(projectRoot, args);
     const store = openResearchStore(projectRoot);
     try {
-      const record = buildPublishedRecord(store, id);
+      // Tool output is machine output, so publishing it is an explicit choice
+      // rather than a default.
+      const record = buildPublishedRecord(store, id, projectRoot,
+        { includeToolOutput: args.includes("--with-tool-output"),
+          includeTrace: !args.includes("--no-trace") });
       const out = value(args, "out");
       if (out) {
         writeFileSync(resolve(projectRoot, out), JSON.stringify(record, null, 2), "utf8");

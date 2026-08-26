@@ -479,7 +479,7 @@ function providerFor(request: WorkerRequest) {
       // request and is longer than any normal campaign operation.
       timeout: 2_147_000_000,
       maxRetries: 3,
-      defaultHeaders: { "X-OpenRouter-Title": "Adversarial Autoresearch" },
+      defaultHeaders: { "X-OpenRouter-Title": "CURI" },
     });
     return {
       ai: genkit({ plugins: [plugin] }),
@@ -523,7 +523,7 @@ async function openRouterSearch(apiKey: string, query: string, maxResults: numbe
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "X-OpenRouter-Title": "Adversarial Autoresearch",
+      "X-OpenRouter-Title": "CURI",
     },
     signal: AbortSignal.timeout(120_000),
     body: JSON.stringify({
@@ -719,14 +719,14 @@ function makeTools(
     z.object({ query: z.string(), maxResults: z.number().int().min(1).max(10).default(5) }), z.string(),
     async ({ query, maxResults }: any) => {
       const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=${maxResults}`;
-      const response = await fetch(url, { signal: AbortSignal.timeout(20_000), headers: { "User-Agent": "adversarial-autoresearch/0.1" } });
+      const response = await fetch(url, { signal: AbortSignal.timeout(20_000), headers: { "User-Agent": "curi-research/0.1" } });
       if (!response.ok) throw new Error(`arXiv HTTP ${response.status}`);
       return truncate(await response.text(), 30_000);
     });
   add("code_search", "Search public GitHub code. GITHUB_TOKEN is used when configured.",
     z.object({ query: z.string(), perPage: z.number().int().min(1).max(20).default(10) }), z.string(),
     async ({ query, perPage }: any) => {
-      const headers: Record<string, string> = { Accept: "application/vnd.github+json", "User-Agent": "adversarial-autoresearch/0.1" };
+      const headers: Record<string, string> = { Accept: "application/vnd.github+json", "User-Agent": "curi-research/0.1" };
       if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
       const response = await fetch(`https://api.github.com/search/code?q=${encodeURIComponent(query)}&per_page=${perPage}`, { headers, signal: AbortSignal.timeout(20_000) });
       if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);

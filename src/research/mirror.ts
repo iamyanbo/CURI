@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { Firestore } from "@google-cloud/firestore";
+import { Firestore, WriteBatch } from "@google-cloud/firestore";
 
 import type { PublishedRecord } from "./publish.js";
 
@@ -36,6 +36,10 @@ export const MIRROR_COLLECTIONS = [
   { name: "sources", idField: "source_id" },
   { name: "runs", idField: "run_id" },
   { name: "commands", idField: null },
+  // Trace steps arrive grouped: a trace is append-only, so all but the last
+  // group are final once written and republishing them is idempotent. Grouping
+  // keeps a thousand-step run to a dozen writes per sync.
+  { name: "traceSteps", idField: "chunk_id" },
 ] as const;
 
 export function firestoreClient(projectId?: string): Firestore {
@@ -63,25 +67,35 @@ export async function publishToFirestore(input: {
   });
   documents++;
 
+  // Batches are chunked because Firestore rejects one over 500 writes, and only
+  // documents that have actually gone are deleted. Emptying each collection
+  // before rewriting it doubled the writes on every sync and left a reader who
+  // arrived mid-publish looking at a half-empty record.
+  const commitInChunks = async (work: Array<(batch: WriteBatch) => void>) => {
+    for (let index = 0; index < work.length; index += 400) {
+      const batch = firestore.batch();
+      for (const apply of work.slice(index, index + 400)) apply(batch);
+      await batch.commit();
+    }
+  };
+
   for (const { name, idField } of MIRROR_COLLECTIONS) {
     const rows = input.record[name] as Array<Record<string, unknown>>;
     const collection = root.collection(name);
-    const existing = await collection.listDocuments();
-    const batch = firestore.batch();
-    for (const stale of existing) batch.delete(stale);
-    await batch.commit();
-    for (let index = 0; index < rows.length; index += 400) {
-      const batch = firestore.batch();
-      for (const [offset, row] of rows.slice(index, index + 400).entries()) {
-        const declared = idField ? row[idField] : undefined;
-        const id = declared === undefined || declared === null
-          ? `${name}-${String(index + offset).padStart(5, "0")}`
-          : String(declared);
-        batch.set(collection.doc(id), row);
-        documents++;
-      }
-      await batch.commit();
+    const wanted = new Map<string, Record<string, unknown>>();
+    for (const [index, row] of rows.entries()) {
+      const declared = idField ? row[idField] : undefined;
+      const id = declared === undefined || declared === null
+        ? `${name}-${String(index).padStart(5, "0")}`
+        : String(declared);
+      wanted.set(id, row);
     }
+    const existing = await collection.listDocuments();
+    await commitInChunks(existing.filter((doc) => !wanted.has(doc.id))
+      .map((doc) => (batch: WriteBatch) => { batch.delete(doc); }));
+    await commitInChunks([...wanted].map(([id, row]) => (batch: WriteBatch) => {
+      batch.set(collection.doc(id), row); documents++;
+    }));
   }
   return { directionId, documents };
 }
@@ -111,6 +125,17 @@ export async function readPublishedRecord(input: {
 
 /** Shapes a published record into what the dashboard page expects to receive. */
 export function mirrorState(record: PublishedRecord): Record<string, unknown> {
+  // Chunks are stored per run and in order; the page wants one flat trace.
+  const byRun = new Map<string, Array<Record<string, unknown>>>();
+  for (const chunk of record.traceSteps ?? []) {
+    const runId = String(chunk.run_id);
+    if (!byRun.has(runId)) byRun.set(runId, []);
+    byRun.get(runId)!.push(chunk);
+  }
+  const stepsFor = (runId: string) => (byRun.get(runId) ?? [])
+    .sort((left, right) => Number(left.from_seq ?? 0) - Number(right.from_seq ?? 0))
+    .flatMap((chunk) => (chunk.steps as Array<Record<string, unknown>>) ?? []);
+
   const lanes = record.runs.map((run) => {
     const start = Date.parse(String(run.started_at));
     const end = run.completed_at ? Date.parse(String(run.completed_at)) : start;
@@ -123,11 +148,12 @@ export function mirrorState(record: PublishedRecord): Record<string, unknown> {
       startMs: start, endMs: end, durationMs: Math.max(0, end - start),
       model: run.model, tokens: Number(run.input_tokens ?? 0) + Number(run.output_tokens ?? 0),
       costUsd: run.cost_usd, failure: run.failure,
-      // Timing is published, text is not: the piano roll draws from the shape of
-      // the run while the trace itself stays on the machine that produced it.
       segments: run.segments ?? [],
       breakdown: run.breakdown ?? { total: Math.max(0, end - start) },
-      trace: [], traceTotal: 0, heartbeat: null,
+      trace: stepsFor(String(run.run_id)),
+      traceTotal: Number(run.trace_steps ?? 0),
+      traceWithheld: Number(run.trace_withheld ?? 0),
+      heartbeat: null,
     };
   });
   return {

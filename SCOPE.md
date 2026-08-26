@@ -1,6 +1,6 @@
 # Scope and trust boundary
 
-Adversarial Autoresearch is a bounded autonomous experimentation system, not proof that arbitrary scientific claims are true.
+CURI is a bounded autonomous experimentation system, not proof that arbitrary scientific claims are true.
 
 ## Enforced by code
 

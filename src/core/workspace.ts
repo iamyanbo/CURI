@@ -47,7 +47,7 @@ export function ensureRepo(repoDir: string, seed: (dir: string) => void): string
     mkdirSync(repoDir, { recursive: true });
     git(["init", "-q", "-b", "main"], repoDir);
     git(["config", "user.email", "harness@local"], repoDir);
-    git(["config", "user.name", "autoresearch"], repoDir);
+    git(["config", "user.name", "CURI"], repoDir);
     seed(repoDir);
     git(["add", "-A"], repoDir);
     git(["commit", "-q", "-m", "baseline"], repoDir);

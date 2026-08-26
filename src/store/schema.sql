@@ -1,4 +1,4 @@
--- Adversarial Autoresearch v0 local schema.
+-- CURI v0 local schema.
 -- 14 tables. Reduced from 03's 25 for the single-user local case.
 
 CREATE TABLE campaigns (
