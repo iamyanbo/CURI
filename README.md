@@ -204,9 +204,28 @@ The mirror scales to zero, so an idle deployment costs nothing.
 ### Tests
 
 ```bash
-npm test        # 144 tests
+npm test        # 73 tests
 npm run typecheck
 ```
+
+---
+
+## Repository layout
+
+```
+src/research/     the research runtime: supervisor, orchestrator, executor,
+                  watcher, delegation gate, preflight, publisher, mirror
+src/worker/       Genkit worker — tools, sandbox, metering, trace
+src/config/       runtime configuration, environment loading, doctor
+src/store/        cross-project memory shared with the worker
+prompts/          the agent prompts; researcher.md carries the research policy
+test/             73 tests, including the anti-hill-climbing invariants
+deploy/           minimal dependency set for the hosted mirror
+docs/             design notes and direction briefs
+```
+
+The previous architecture — a campaign harness that optimised a score — is kept
+under `pi-extension/legacy-harness/` and is not reachable from this codebase.
 
 ---
 

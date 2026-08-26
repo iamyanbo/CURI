@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { geminiApiKey } from "./env-file.js";
+import { geminiApiKey, vertexApiKey } from "./env-file.js";
 import type { RuntimeConfig } from "./runtime.js";
 import { openRouterCredentialSource } from "./openrouter-auth.js";
 
@@ -29,11 +29,16 @@ export function runtimeDoctor(config: RuntimeConfig, env = process.env): DoctorC
   } else if (config.modelProvider === "gemini-api") {
     checks.push({ name: "Gemini API key", ok: Boolean(geminiApiKey(env)),
       detail: geminiApiKey(env) ? "configured" : "set GEMINI_API_KEY (or GOOGLE_API_KEY)" });
+  } else if (vertexApiKey(env)) {
+    // Express mode authenticates with a key and is regionless, so it needs
+    // neither a project nor Application Default Credentials. Reporting those as
+    // failures sent an otherwise correctly configured machine chasing nothing.
+    checks.push({ name: "Vertex AI express key", ok: true, detail: "configured" });
   } else {
     const adcPath = env.GOOGLE_APPLICATION_CREDENTIALS
       ?? join(homedir(), ".config", "gcloud", "application_default_credentials.json");
     checks.push({ name: "Vertex project", ok: Boolean(env.GOOGLE_CLOUD_PROJECT),
-      detail: env.GOOGLE_CLOUD_PROJECT ?? "set GOOGLE_CLOUD_PROJECT" });
+      detail: env.GOOGLE_CLOUD_PROJECT ?? "set GOOGLE_CLOUD_PROJECT, or set VERTEX_API_KEY for express mode" });
     checks.push({ name: "Application Default Credentials", ok: existsSync(adcPath),
       detail: existsSync(adcPath) ? adcPath : "run: gcloud auth application-default login" });
   }
