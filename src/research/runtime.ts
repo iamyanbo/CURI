@@ -8,6 +8,7 @@ import { runNextExecutorTask, runOrchestratorTurn } from "./orchestrator.js";
 import {
   cancellableDelay, clearResearchStops, requestedStop, watcherStopFile,
 } from "./control.js";
+import { startMirrorSync } from "./mirror-sync.js";
 import { ResearchStore, researchNow } from "./store.js";
 import { watcherSweep as sweep } from "./watcher.js";
 
@@ -253,6 +254,10 @@ export function startResearchSupervisor(input: { projectRoot: string; directionI
 export async function runResearchSupervisor(input: { projectRoot: string; directionId: string; model?: string }): Promise<void> {
   const pidPath = researchSupervisorFile(input.projectRoot, input.directionId);
   writeFileSync(pidPath, String(process.pid), "utf8");
+  // The public record is republished from here rather than by hand, so the
+  // mirror shows the direction as it is now instead of as it was whenever
+  // someone last ran `research publish`. No-op unless a project is configured.
+  const stopMirrorSync = startMirrorSync({ projectRoot: input.projectRoot, directionId: input.directionId });
   try {
     const recoveryStore = openResearchStore(input.projectRoot);
     try { reconcileSupervisorState(recoveryStore, input.directionId); } finally { recoveryStore.close(); }
@@ -295,7 +300,12 @@ export async function runResearchSupervisor(input: { projectRoot: string; direct
       lastSeenEvent = latestEvent;
       if (!await cancellableDelay(input.projectRoot, idleBackoffMs(quietTurns))) break;
     }
-  } finally { try { unlinkSync(pidPath); } catch { /* best effort */ } }
+  } finally {
+    // One last publish, so the record the mirror serves is the state the run
+    // actually ended in rather than the state at the previous tick.
+    await stopMirrorSync();
+    try { unlinkSync(pidPath); } catch { /* best effort */ }
+  }
 }
 
 export function startWatcherDaemon(input: { projectRoot: string; directionId: string; model?: string }) {

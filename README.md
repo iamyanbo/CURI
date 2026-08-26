@@ -1,17 +1,38 @@
 # Lean Research Runtime
 
-An autonomous research system that accumulates **understanding**, not scores.
+An autonomous research runtime for accumulating **understanding**, not scores.
 
-Most autonomous "research" agents hill climb: they pick a metric, mutate an implementation,
-keep whatever number improved, and repeat. That produces a leaderboard, not knowledge. This
-runtime is built so that loop is structurally impossible — there is no global score, no
-incumbent implementation, and no baseline to advance. A task begins from competing
-explanations, evidence updates a written understanding, and a negative or bounded result is a
-completed finding rather than a failure.
+## Abstract
 
-It ran unattended on a consumer GPU and produced four findings across four research threads,
-including one that **refuted its own hypothesis** and one that recorded a **wall-clock
-slowdown** as a real result.
+The current wave of harness development and “autoresearch” pipelines has largely been designed to
+maximize benchmark scores: propose a change, run the evaluator, keep it if the number improves,
+and repeat.
+That is a reasonable engineering loop when the benchmark is the specification. It is a poor
+motivation for research. It invites Goodhart’s law — once a measure becomes a target, it ceases to
+be a good measure — because a system can learn to improve the measurement without improving the
+thing the measurement was meant to represent.
+
+This project starts from that concern. Lean Research Runtime is a pure research direction: an
+attempt to build an autonomous system whose basic unit is not a score improvement but an
+investigation. It starts with a question and competing explanations, uses experiments as evidence,
+records what the evidence supports or rules out, and leaves every result bounded by the conditions
+actually tested. A negative, bounded or inconclusive result is still a finding. The aim is a
+cumulative research record that becomes clearer and more useful over time, not a leaderboard.
+
+The project is inspired by Terence Tao’s [*Mathematics in the age of AI*](https://arxiv.org/abs/2608.16753).
+Tao’s argument is to look beyond the capabilities question — whether AI can perform research-level
+tasks — and ask what goals and values research should preserve when those capabilities arrive. We
+follow that philosophy here. The runtime makes those values operational: research questions are
+anchored in prior evidence; competing explanations are kept visible; claims stay within their
+evidence; decisive checks are independently rerun; and the system is allowed to stop when more
+activity would not produce more understanding. The point is not to make an agent look autonomous.
+It is to test whether an autonomous process can produce research that another person can inspect,
+question and build on.
+
+In an unattended run on a consumer GPU, the prototype produced four findings across four research
+threads, including one that **refuted its own hypothesis** and one that recorded a **wall-clock
+slowdown** as a real result. The rest of this document describes the runtime and the constraints
+that make those findings possible.
 
 **Live mirror:** https://research-mirror-qdqttyl3jq-uc.a.run.app
 
@@ -260,6 +281,12 @@ npx tsx src/cli.ts research publish --project $PROJECT
 gcloud builds submit --config cloudbuild.mirror.yaml --project $PROJECT
 ```
 
+Set `GOOGLE_CLOUD_PROJECT` (or `AR_PUBLISH_PROJECT`) in `.env` and the supervisor republishes the
+record itself, so the mirror follows the live run instead of freezing at the last manual publish.
+It only writes when an event has actually been appended, so a quiet direction costs nothing, and a
+Firestore failure is logged and retried rather than ending the run. `AR_MIRROR_SYNC_SECONDS`
+changes the interval (default 120, floor 30); `AR_MIRROR_SYNC=off` disables it.
+
 ### Why experiments run on local hardware
 
 Experiments execute on whatever GPU the machine has, not on a cloud accelerator. That was a
@@ -278,7 +305,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 76 tests
+npm test        # 79 tests
 npm run typecheck
 ```
 
