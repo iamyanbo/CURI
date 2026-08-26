@@ -1,10 +1,10 @@
 /**
- * One research cycle: MANAGE -> REGISTER -> EXECUTE -> CLASSIFY -> RUN ->
+ * One research cycle: ARCHITECT (when due) -> MICRO-MANAGE -> REGISTER -> EXECUTE -> CLASSIFY -> RUN ->
  * EVALUATE -> JUDGE -> SEAL.
  *
- * Exactly two steps call a model (MANAGE and EXECUTE). Everything else is
- * deterministic code, which is what makes the time decomposition meaningful and
- * keeps the cost of a cycle bounded and predictable.
+ * The macro architect is invoked only when a program is absent or due for
+ * strategic review. The micro manager and executor run each cycle. Everything
+ * after them is deterministic code.
  *
  * The cycle never trusts a worker for anything that can be observed directly:
  * the change class comes from the diff, the metric comes from the protected
@@ -29,14 +29,22 @@ import { extractJson, type WorkerUsage } from "../worker/types.js";
 import { consumeSteer, steerBlock } from "../steer.js";
 import { harvestCampaign, recordHarvest } from "../harvest.js";
 import { measuredFloor } from "./calibrate.js";
+import { processStartId } from "../daemon.js";
+import { observeBlockingOperation } from "../supervision/progress-heartbeat.js";
+import { defaultMemoryPath, GlobalMemoryStore } from "../memory/store.js";
+import { rankedCampaignBriefing, pendingSignals, markSignalsReviewed } from "../memory/campaign-memory.js";
+import { assessSourceRelevance } from "../watcher/relevance.js";
+import { readWatcherSubscription, watcherTopics } from "../watcher/service.js";
 
 export interface CycleConfig {
   projectRoot: string;
   /** The domain bridge. The loop never imports a domain directly. */
   harness: Harness;
   campaignId: string;
+  architectModel?: string | undefined;
   managerModel?: string | undefined;
   executorModel?: string | undefined;
+  architectTimeoutMs: number;
   managerTimeoutMs: number;
   executorTimeoutMs: number;
   experimentTimeoutMs: number;
@@ -61,7 +69,33 @@ export interface ManagerProposal {
     steps_allowed?: number;
   };
   contract: { support_delta: number; refute_delta: number; rationale: string };
+  program_step?: { milestone: number; checkpoint_if_valid: boolean };
   instruction_to_executor: string;
+}
+
+export interface ArchitectPlan {
+  program: {
+    title: string;
+    complexity: "simple" | "compound" | "architectural";
+    thesis: string;
+    novelty: string;
+    milestones: string[];
+    pivot_conditions: string[];
+    manager_brief: string;
+    review_after_experiments: number;
+    watch_strategy: {
+      core_topics: string[];
+      adjacent_domains: string[];
+      enabling_disciplines: string[];
+      bottlenecks: string[];
+      exclusions: string[];
+    };
+  };
+  signal_decisions: Array<{
+    idea_id: string;
+    decision: "adopt" | "adapt" | "combine" | "verify" | "investigate" | "reject";
+    rationale: string;
+  }>;
 }
 
 export interface CycleResult {
@@ -75,7 +109,7 @@ export interface CycleResult {
   classMismatch: boolean;
   primaryValue: number | null;
   holdoutValue: number | null;
-  usage: { manager: WorkerUsage; executor: WorkerUsage };
+  usage: { architect: WorkerUsage; manager: WorkerUsage; executor: WorkerUsage };
   abortReason?: string;
   durationMs: number;
   lane: Lane | null;
@@ -96,6 +130,61 @@ const RESOURCE = "campaign";
  * The prompts say so explicitly.
  */
 const SEARCH_TOOLS = ["web_search", "arxiv_search", "code_search", "fetch_content"];
+const MEMORY_TOOL = "search_research_memory";
+
+function workerMemory(cfg: CycleConfig) {
+  return {
+    globalDbPath: defaultMemoryPath(),
+    stateDbPath: join(cfg.projectRoot, ".autoresearch", "state.sqlite"),
+    campaignId: cfg.campaignId,
+    asOf: cfg.harness.domain.leadsAsOf ?? null,
+  };
+}
+
+/**
+ * Whether a failed executor attempt is worth repeating. A malformed tool call,
+ * an empty reply or a transport fault are properties of one model turn, and a
+ * second turn usually does not repeat them. Rate limiting and an exhausted time
+ * budget are properties of the environment instead: they would recur at once,
+ * and retrying only spends the budget twice.
+ */
+export function isRetryableExecutorFailure(failure: string): boolean {
+  if (failure.startsWith("PROVIDER_RATE_LIMITED")) return false;
+  if (failure === "PROCESS_TIMEOUT") return false;
+  return true;
+}
+
+/**
+ * The correction prepended to a second executor attempt. It has to name what
+ * actually went wrong: an executor told "you changed no files" after its own
+ * attempt died mid-flight would go looking for the wrong problem.
+ */
+export function executorCorrection(
+  reason: string | null,
+  h: { domain: { candidateFiles: string[] } },
+  runCommand: string,
+): string {
+  const files = h.domain.candidateFiles.join(" or ");
+  if (reason === null) {
+    return [
+      "## Correction",
+      "",
+      "Your previous attempt changed no files. Read the assignment again and make",
+      `the smallest concrete edit to ${files} that implements it,`,
+      `then verify with \`${runCommand}\`. If the change genuinely requires no edit,`,
+      "say so explicitly - do not stop silently.",
+    ].join("\n");
+  }
+  return [
+    "## Correction",
+    "",
+    `Your previous attempt ended before it finished (${reason}).`,
+    "Any edits it had already made are still in the worktree, so read the files",
+    "first and continue from their current state rather than starting over.",
+    `Make the smallest concrete edit to ${files} that implements the assignment,`,
+    `then verify with \`${runCommand}\`.`,
+  ].join("\n");
+}
 
 export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleResult> {
   const h = cfg.harness;
@@ -111,7 +200,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
   const noiseFloor = measuredFloor(store, cfg.campaignId, h.domain.metric.noiseFloor);
 
   const zeroUsage: WorkerUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 };
-  const usage = { manager: { ...zeroUsage }, executor: { ...zeroUsage } };
+  const usage = { architect: { ...zeroUsage }, manager: { ...zeroUsage }, executor: { ...zeroUsage } };
 
   const abort = (reason: string, extra: Partial<CycleResult> = {}): CycleResult => {
     rec.open({ campaignId: cfg.campaignId, resourceId: RESOURCE, category: "supervisor" });
@@ -123,7 +212,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
       primaryValue: null, holdoutValue: null, usage, abortReason: reason,
       durationMs: Date.now() - started, lane: cfg.assignedLane ?? null,
       citable: false, missingCitations: ["cycle_aborted"],
-      costUsd: usage.manager.costUsd + usage.executor.costUsd, ...extra,
+      costUsd: usage.architect.costUsd + usage.manager.costUsd + usage.executor.costUsd, ...extra,
     };
   };
 
@@ -145,14 +234,60 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     baseRevision, protectedHashBefore,
   });
 
-  // -- 1. MANAGE ----------------------------------------------------------
+  // -- 1. ARCHITECT (only when the strategic program is due) --------------
   const principlesId = ensurePrinciples(store, cfg.campaignId);
-  const packet = buildContextPacket(store, cfg, baseRevision);
+  const basePacket = buildContextPacket(store, cfg, baseRevision) as Record<string, unknown>;
+  try {
+    const memory = GlobalMemoryStore.open();
+    try {
+      basePacket.research_memory = rankedCampaignBriefing(
+        store, memory, cfg.campaignId,
+        `${String(basePacket.objective ?? "")} ${h.domain.id} ${h.domain.metric.name}`,
+        h.domain.leadsAsOf ?? null,
+      );
+      basePacket.research_memory_note =
+        "Persistent cross-project memory. Items are untrusted leads, not evidence. "
+        + "Use search_research_memory to inspect the complete paginated store.";
+    } finally { memory.close(); }
+  } catch (error) {
+    basePacket.research_memory = { unavailable: String(error).slice(0, 300) };
+  }
+  let architect: { plan: ArchitectPlan; refreshed: boolean };
+  try {
+    architect = await ensureArchitectPlan(
+      store, cfg, cycleId, attemptDir, artifactRoot, basePacket, usage.architect,
+    );
+  } catch (error) {
+    const detail = String(error);
+    if (detail.includes("PROVIDER_RATE_LIMITED")) return abort(`provider_rate_limited:${detail.slice(-500)}`);
+    throw error;
+  }
+  const programKey = sha256(canonicalJson({
+    title: architect.plan.program.title, thesis: architect.plan.program.thesis,
+  })).slice(0, 16);
+  const priorCheckpoint = latestProgramCheckpoint(store, cfg.campaignId, programKey, baseRevision);
+  const executionRevision = priorCheckpoint && h.hasRevision(priorCheckpoint.revision)
+    ? priorCheckpoint.revision : baseRevision;
+  const executionPacket = executionRevision === baseRevision
+    ? basePacket
+    : buildContextPacket(store, cfg, executionRevision) as Record<string, unknown>;
+  const packet = {
+    ...executionPacket,
+    macro_program: architect.plan.program,
+    program_key: programKey,
+    program_checkpoint: priorCheckpoint ?? null,
+    comparison_baseline_revision: baseRevision,
+    implementation_base_revision: executionRevision,
+    macro_program_note: architect.refreshed
+      ? "The macro architect created or revised this program now. Select its next falsifiable experiment."
+      : "This program persists across experiments. Advance a milestone or test a pivot condition; do not restart strategy from scratch.",
+  };
   writeFileSync(join(attemptDir, "context-packet.json"), canonicalJson(packet), "utf8");
 
   const steer = cfg.stateDir ? consumeSteer(store, cfg.campaignId, cfg.stateDir) : null;
   const steerText = steer ? steerBlock(steer) : "";
 
+  // -- 2. MICRO-MANAGE ----------------------------------------------------
   rec.open({ campaignId: cfg.campaignId, resourceId: RESOURCE, category: "model_reasoning" });
   const managerPrompt = [
     readFileSync(join(cfg.projectRoot, "prompts", "manager.md"), "utf8"),
@@ -233,9 +368,11 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
       // Search only where the domain permits it. A time-indexed domain gets
       // none: the packet is its whole world, and literature reaches it through
       // the date-fenced watcher instead.
-      tools: h.domain.agentSearch === false ? [] : SEARCH_TOOLS,
+      tools: [...(h.domain.agentSearch === false ? [] : SEARCH_TOOLS), MEMORY_TOOL],
       model: cfg.managerModel,
       timeoutMs: cfg.managerTimeoutMs,
+      campaignId: cfg.campaignId, cycleId, attemptId: managerRec.attemptId,
+      memory: workerMemory(cfg),
       structuredOutput: "manager-proposal",
     });
     usage.manager.inputTokens += managerRun.usage.inputTokens;
@@ -272,6 +409,9 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     sealText(store, cfg.campaignId, managerRec.attemptId, "agent-trace",
              managerRun.trace.map((t) => JSON.stringify(t)).join("\n"),
              join(attemptDir, "staging"), artifactRoot);
+    if (managerRun.failure?.startsWith("PROVIDER_RATE_LIMITED")) {
+      return abort(`provider_rate_limited:${managerRun.stderrTail.slice(-500)}`);
+    }
   }
 
   if (proposal === null) return abort(lastManagerFailure);
@@ -294,7 +434,8 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     refute_delta: proposal.contract.refute_delta,
     seed_policy: { reproduction: h.domain.replication.kind, variants: h.reproductionVariants().map((v) => v.label), candidate_may_set: false },
     shortcut_checks: ["self_report_agreement", "val_holdout_consistency", "finite_metrics", "plausible_range"],
-    base_revision: baseRevision,
+    base_revision: executionRevision,
+    comparison_base_revision: baseRevision,
     domain: h.domain.id,
     determinism: h.domain.determinism,
     replication: { kind: h.domain.replication.kind, attempts: h.domain.replication.attempts, minAgreement: h.minAgreement },
@@ -306,14 +447,16 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     s.db.prepare(
       `INSERT INTO hypotheses (hypothesis_id, campaign_id, principles_id, lane, title, mechanism,
          motivation, falsifier, change_class, status, belief_advisory, steps_allowed,
-         created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,'proposed',?,?,?,?)`,
+         step_index, parent_step_id, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,'proposed',?,?,?,?,?,?)`,
     ).run(
       hypothesisId, cfg.campaignId, principlesId, proposal.hypothesis.lane,
       proposal.hypothesis.title, proposal.hypothesis.mechanism, proposal.hypothesis.motivation,
       proposal.hypothesis.falsifier, normaliseChangeClass(proposal.hypothesis.change_class),
       clamp01(proposal.hypothesis.belief_advisory),
       Math.min(5, Math.max(1, Number(proposal.hypothesis.steps_allowed ?? 1))),
+      Math.max(1, Number(proposal.program_step?.milestone ?? 1)),
+      priorCheckpoint?.hypothesisId ?? null,
       nowIso(), nowIso(),
     );
     s.db.prepare(
@@ -322,7 +465,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
          budget_json, refutation_json, shortcut_checks_json, contract_hash, registered_at)
        VALUES (?,?,1,'registered',?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).run(
-      contractId, hypothesisId, h.domain.metric.name, h.domain.metric.direction, baseRevision,
+      contractId, hypothesisId, h.domain.metric.name, h.domain.metric.direction, executionRevision,
       "", "",
       protectedHashBefore,
       JSON.stringify(contractBody.seed_policy),
@@ -341,7 +484,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
   });
 
   // -- 3. EXECUTE ---------------------------------------------------------
-  const worktree = h.worktree(cycleId, baseRevision);
+  const worktree = h.worktree(cycleId, executionRevision);
   rec.open({ campaignId: cfg.campaignId, resourceId: RESOURCE, category: "model_reasoning" });
   const executorPrompt = [
     fillExecutorTemplate(
@@ -353,14 +496,20 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     `Mechanism: ${proposal.hypothesis.mechanism}`,
   ].join("\n");
 
-  // The executor gets one retry when it changes nothing. Observed: an executor
-  // read the code for 152s across three tool calls, returned two blank lines,
-  // and edited nothing - wasting a cycle silently. Aborts do not consume lane
-  // budget, so a lane that keeps doing this walks the campaign into the
+  // The executor gets one retry, for a wasted attempt of either kind: one that
+  // changed nothing, and one that failed outright. Observed for the first: an
+  // executor read the code for 152s across three tool calls, returned two blank
+  // lines, and edited nothing. Observed for the second: one malformed tool call
+  // from the model ended a 21-minute attempt, and the cycle was abandoned
+  // without ever asking the executor again. Aborts do not consume lane budget,
+  // so a lane that keeps doing either walks the campaign into the
   // consecutive-abort cap instead of failing visibly.
   let executorRun: Awaited<ReturnType<typeof runWorker>> | null = null;
   let executorAttemptId = "";
   let classification = h.classify(worktree);
+  // null means "the attempt succeeded but changed nothing"; a string is the
+  // failure code of an attempt that did not finish.
+  let executorRetryReason: string | null = null;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     const executorRec = openRun(store, cfg.campaignId, "executor", {
@@ -372,16 +521,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
 
     const prompt = attempt === 1
       ? executorPrompt
-      : [
-          executorPrompt,
-          "",
-          "## Correction",
-          "",
-          "Your previous attempt changed no files. Read the assignment again and make",
-          `the smallest concrete edit to ${h.domain.candidateFiles.join(" or ")} that implements it,`,
-          `then verify with \`${runCommandOf(h)}\`. If the change genuinely requires no edit,`,
-          "say so explicitly - do not stop silently.",
-        ].join("\n");
+      : [executorPrompt, "", executorCorrection(executorRetryReason, h, runCommandOf(h))].join("\n");
 
     executorRun = await runWorker({
       role: "executor",
@@ -396,6 +536,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
         : ["read", "write", "edit", "grep", "find", "ls", "bash", ...SEARCH_TOOLS],
       model: cfg.executorModel,
       timeoutMs: cfg.executorTimeoutMs,
+      campaignId: cfg.campaignId, cycleId, attemptId: executorRec.attemptId,
     });
     usage.executor.inputTokens += executorRun.usage.inputTokens;
     usage.executor.outputTokens += executorRun.usage.outputTokens;
@@ -404,17 +545,51 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
 
     classification = h.classify(worktree);
     const madeChange = classification.changedPaths.length > 0;
-    closeRun(store, executorRec, executorRun.ok && madeChange, {
+    const recoverableEmptyExecutor = executorRun.failure === "VALIDATION_EMPTY_RESPONSE"
+      && madeChange && !executorRun.trace.some((step) => step.isError);
+    const executorAccepted = executorRun.ok || recoverableEmptyExecutor;
+    closeRun(store, executorRec, executorAccepted && madeChange, {
       exitCode: executorRun.exitCode,
-      failureCode: madeChange ? (executorRun.failure ?? null) : "EXECUTOR_MADE_NO_CHANGE",
+      // Preserve the worker/tool failure when it produced no diff. The old
+      // ordering hid edit, policy, and provider errors behind the generic
+      // no-change label, making diagnosis and retry selection impossible.
+      failureCode: executorRun.failure ?? (!madeChange ? "EXECUTOR_MADE_NO_CHANGE" : null),
       modelSpec: { model: executorRun.model, provider: executorRun.provider, usage: executorRun.usage },
     });
     sealText(store, cfg.campaignId, executorRec.attemptId, "agent-trace",
              executorRun.trace.map((t) => JSON.stringify(t)).join("\n"),
              join(attemptDir, "staging"), artifactRoot);
 
+    // A failed worker is never a valid candidate, even if it left a partial
+    // diff behind. Only a successful worker that intentionally leaves the
+    // baseline untouched may use control's empty-diff semantics.
+    if (!executorAccepted) {
+      const failure = executorRun.failure ?? "unknown";
+      // A momentary fault in one model turn is not evidence that the
+      // hypothesis cannot be implemented, and the worktree still holds whatever
+      // partial work was done, so spend the second attempt rather than the
+      // whole cycle.
+      if (attempt < 2 && isRetryableExecutorFailure(failure)) {
+        executorRetryReason = failure;
+        continue;
+      }
+      if (!cfg.keepWorktree) h.discard(worktree);
+      return abort(`executor_failed:${failure}`, {
+        hypothesisId, contractId, declaredChangeClass: normaliseChangeClass(proposal.hypothesis.change_class),
+      });
+    }
     // An empty diff is correct behaviour in the control lane, so stop there.
     if (madeChange || lane === "control") break;
+    executorRetryReason = null;
+  }
+
+  if (executorRun?.failure?.startsWith("PROVIDER_RATE_LIMITED")) {
+    store.db.prepare("UPDATE hypotheses SET status='abandoned', updated_at=? WHERE hypothesis_id=?")
+      .run(nowIso(), hypothesisId);
+    if (!cfg.keepWorktree) h.discard(worktree);
+    return abort(`provider_rate_limited:${executorRun.stderrTail.slice(-500)}`, {
+      hypothesisId, contractId, lane, declaredChangeClass: normaliseChangeClass(proposal.hypothesis.change_class),
+    });
   }
 
   // -- 4. CLASSIFY --------------------------------------------------------
@@ -440,6 +615,12 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
   // control lane the executor doing nothing is correct behaviour and the
   // experiment proceeds. Anywhere else it means the cycle produced no
   // candidate, and there is nothing to measure.
+  if (classification.changedPaths.length === 0 && executorRun?.failure) {
+    if (!cfg.keepWorktree) h.discard(worktree);
+    return abort(`executor_failed_without_change:${executorRun.failure}`, {
+      hypothesisId, contractId, declaredChangeClass: declared,
+    });
+  }
   if (classification.changedPaths.length === 0 && lane !== "control") {
     if (!cfg.keepWorktree) h.discard(worktree);
     return abort("executor_made_no_change", { hypothesisId, contractId, declaredChangeClass: declared });
@@ -457,7 +638,12 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     idempotencyKey: `compute:${cycleId}`,
     inputHash: contractHash,
   });
-  const experiment = h.run(worktree, join(attemptDir, "staging"), cfg.experimentTimeoutMs);
+  const experiment = observeBlockingOperation(
+    join(attemptDir, "compute", "heartbeat.json"),
+    { campaignId: cfg.campaignId, cycleId, attemptId: computeRec.attemptId, processStartId: processStartId(process.pid) },
+    "local experiment",
+    () => h.run(worktree, join(attemptDir, "staging"), cfg.experimentTimeoutMs),
+  );
   closeRun(store, computeRec, experiment.ok, {
     failureCode: experiment.failureCode ?? null,
   });
@@ -500,14 +686,19 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     inputHash: experiment.outputHash ?? contractHash,
   });
   const evaluation = experiment.ok && experiment.outputPath
-    ? h.evaluate({
-        worktree, outputPath: experiment.outputPath,
+    ? observeBlockingOperation(
+      join(attemptDir, "evaluation", "heartbeat.json"),
+      { campaignId: cfg.campaignId, cycleId, attemptId: evalRec.attemptId, processStartId: processStartId(process.pid) },
+      "protected evaluator",
+      () => h.evaluate({
+        worktree, outputPath: experiment.outputPath!,
         stagingDir: join(attemptDir, "staging"),
         baselinePrimary: cfg.baselinePrimary,
         baselineSecondary: cfg.baselineSecondary ?? null,
         supportDelta: measurementScale,
         timeoutMs: cfg.evaluatorTimeoutMs,
-      })
+      }),
+    )
     : {
         ok: false, failureCode: "NO_EXPERIMENT_OUTPUT", primary: null, secondary: null,
         checks: [{ id: "experiment_produced_output", class: "integrity" as const, passed: false,
@@ -575,13 +766,23 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
   // avoid, so a regression before the final step is recorded as `tested`
   // rather than allowed to refute the idea.
   const stepsAllowed = Math.min(5, Math.max(1, Number(proposal.hypothesis.steps_allowed ?? 1)));
-  const isIntermediateStep = lane === "moonshot" && stepsAllowed > 1;
+  const requestedProgramCheckpoint = Boolean(
+    proposal.program_step?.checkpoint_if_valid
+    && architect.plan.program.complexity !== "simple",
+  );
+  const checkpointIntegrityValid = experiment.ok && evaluation.ok && allChecksPassed
+    && !verdict.integrityFailed && classification.changedPaths.length > 0;
+  const isIntermediateStep = (lane === "moonshot" && stepsAllowed > 1)
+    || (requestedProgramCheckpoint && checkpointIntegrityValid);
   if (isIntermediateStep && (verdict.status === "refuted" || verdict.status === "inconclusive")) {
     verdict.status = "tested";
-    verdict.reasons = ["MOONSHOT_INTERMEDIATE_STEP", ...verdict.reasons];
+    verdict.reasons = [requestedProgramCheckpoint ? "PROGRAM_INTERMEDIATE_STEP" : "MOONSHOT_INTERMEDIATE_STEP", ...verdict.reasons];
     verdict.explanation =
-      `intermediate step of a ${stepsAllowed}-step moonshot: ${verdict.explanation}. ` +
-      "Recorded, but a step before the last cannot refute the idea.";
+      requestedProgramCheckpoint
+        ? `valid intermediate milestone ${proposal.program_step?.milestone} of macro program ${architect.plan.program.title}: ${verdict.explanation}. `
+          + "Checkpointed for the dependent next milestone, but not eligible to advance the scientific baseline."
+        : `intermediate step of a ${stepsAllowed}-step moonshot: ${verdict.explanation}. `
+          + "Recorded, but a step before the last cannot refute the idea.";
   }
 
   // -- 8. SEAL ------------------------------------------------------------
@@ -666,6 +867,32 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     });
   });
 
+  if (verdict.status === "tested" && requestedProgramCheckpoint && checkpointIntegrityValid) {
+    const checkpoint = h.checkpoint(
+      executionRevision, classification.diffText,
+      `program ${programKey} milestone ${proposal.program_step?.milestone}: ${hypothesisId}`,
+      programKey,
+    );
+    if (checkpoint.ok) {
+      store.appendEvent({
+        campaignId: cfg.campaignId, aggregateKind: "program", aggregateId: `program:${programKey}`,
+        aggregateRevision: Number(proposal.program_step?.milestone ?? 1),
+        eventType: "program.checkpointed", actorKind: "supervisor",
+        idempotencyKey: `program.checkpointed:${hypothesisId}`,
+        payload: {
+          programKey, revision: checkpoint.revision, campaignBaseRevision: baseRevision,
+          parentRevision: executionRevision, hypothesisId,
+          milestone: Number(proposal.program_step?.milestone ?? 1),
+          primary: evaluation.primary, status: verdict.status,
+        },
+      });
+    } else {
+      event(store, cfg.campaignId, "program.checkpoint_failed", "supervisor", cycleId, {
+        programKey, hypothesisId, failure: checkpoint.failure,
+      });
+    }
+  }
+
   // What the agents READ is part of a claim's provenance. Harvested here rather
   // than by a separate pass, so a cycle's sources are recorded with the cycle.
   try {
@@ -683,7 +910,7 @@ export async function runCycle(store: Store, cfg: CycleConfig): Promise<CycleRes
     primaryValue: evaluation.primary, holdoutValue: evaluation.secondary,
     usage, durationMs: Date.now() - started, lane,
     citable: citability.citable, missingCitations: citability.missing,
-    costUsd: usage.manager.costUsd + usage.executor.costUsd,
+    costUsd: usage.architect.costUsd + usage.manager.costUsd + usage.executor.costUsd,
   };
   writeFileSync(join(attemptDir, "cycle-result.json"), JSON.stringify(result, null, 2), "utf8");
   return result;
@@ -730,8 +957,8 @@ function verificationStep(h: Harness): string {
     ].join("\n");
   }
   return [
-    `Run \`${runCommandOf(h)}\` once and confirm it completes and writes`,
-    `\`${h.domain.outputPath ?? "its declared output"}\`. If it fails, fix it.`,
+    `Run \`${runCommandOf(h)}\` once and confirm it completes.`,
+    "If it fails, fix the candidate before you finish the implementation.",
   ].join("\n");
 }
 
@@ -836,35 +1063,206 @@ function ensurePrinciples(store: Store, campaignId: string): string {
   return id;
 }
 
+interface StoredArchitectPlan {
+  plan: ArchitectPlan;
+  occurredAt: string;
+}
+
+interface ProgramCheckpoint {
+  revision: string;
+  campaignBaseRevision: string;
+  hypothesisId: string;
+  milestone: number;
+}
+
+function latestProgramCheckpoint(
+  store: Store, campaignId: string, programKey: string, campaignBaseRevision: string,
+): ProgramCheckpoint | null {
+  const rows = store.db.prepare(
+    `SELECT payload_json FROM events
+     WHERE campaign_id = ? AND event_type = 'program.checkpointed'
+     ORDER BY seq DESC LIMIT 50`,
+  ).all(campaignId) as Array<{ payload_json: string }>;
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.payload_json) as ProgramCheckpoint & { programKey?: string };
+      if (payload.programKey === programKey && payload.campaignBaseRevision === campaignBaseRevision) {
+        return payload;
+      }
+    } catch { /* ignore malformed historical event */ }
+  }
+  return null;
+}
+
+function latestArchitectPlan(store: Store, campaignId: string): StoredArchitectPlan | null {
+  const row = store.db.prepare(
+    `SELECT occurred_at, payload_json FROM events
+     WHERE campaign_id = ? AND event_type = 'architect.plan_registered'
+     ORDER BY seq DESC LIMIT 1`,
+  ).get(campaignId) as { occurred_at: string; payload_json: string } | undefined;
+  if (!row) return null;
+  try {
+    const payload = JSON.parse(row.payload_json) as { plan?: ArchitectPlan };
+    if (!payload.plan?.program?.title) return null;
+    return { plan: payload.plan, occurredAt: row.occurred_at };
+  } catch { return null; }
+}
+
+function normalizedReviewInterval(plan: ArchitectPlan): number {
+  const wanted = Number(plan.program.review_after_experiments);
+  const ranges = {
+    simple: [6, 12], compound: [4, 8], architectural: [2, 5],
+  } as const;
+  const [low, high] = ranges[plan.program.complexity];
+  return Math.min(high, Math.max(low, Number.isFinite(wanted) ? Math.round(wanted) : low));
+}
+
+async function ensureArchitectPlan(
+  store: Store,
+  cfg: CycleConfig,
+  cycleId: string,
+  attemptDir: string,
+  artifactRoot: string,
+  packet: Record<string, unknown>,
+  usage: WorkerUsage,
+): Promise<{ plan: ArchitectPlan; refreshed: boolean }> {
+  const prior = latestArchitectPlan(store, cfg.campaignId);
+  const signals = pendingSignals(store, cfg.campaignId);
+  const macroSteers = store.db.prepare(
+    `SELECT steer_id, scope, text, created_at FROM attention_steers
+     WHERE campaign_id=? AND consumed_at IS NULL AND scope IN ('macro','watcher','all')
+     ORDER BY created_at`,
+  ).all(cfg.campaignId) as Array<{ steer_id: string; scope: string; text: string; created_at: string }>;
+  const experimentsSince = prior
+    ? (store.db.prepare(
+        "SELECT COUNT(*) AS n FROM hypotheses WHERE campaign_id = ? AND created_at > ?",
+      ).get(cfg.campaignId, prior.occurredAt) as { n: number }).n
+    : 0;
+  const dueAt = prior ? normalizedReviewInterval(prior.plan) : 0;
+  if (prior && experimentsSince < dueAt && signals.length === 0 && macroSteers.length === 0) {
+    return { plan: prior.plan, refreshed: false };
+  }
+
+  const prompt = [
+    readFileSync(join(cfg.projectRoot, "prompts", "architect.md"), "utf8"),
+    "\n## Campaign state\n",
+    "```json", JSON.stringify(packet, null, 2), "```",
+    prior ? "\n## Previous macro program\n" : "",
+    prior ? "```json" : "", prior ? JSON.stringify(prior.plan, null, 2) : "", prior ? "```" : "",
+    signals.length ? "\n## New watcher signals requiring review\n" : "",
+    signals.length ? "```json" : "", signals.length ? JSON.stringify(signals, null, 2) : "", signals.length ? "```" : "",
+    macroSteers.length ? "\n## Persistent macro/watcher steering\n" : "",
+    macroSteers.length ? "```json" : "", macroSteers.length ? JSON.stringify(macroSteers, null, 2) : "", macroSteers.length ? "```" : "",
+    prior
+      ? `Strategic review is due after ${experimentsSince} experiments. Preserve what still works, but pivot if its stated conditions were met.`
+      : "No macro program exists yet. Create the first one.",
+    signals.length
+      ? "For every supplied signal, return a signal_decisions entry. Low originality is not a rejection reason when adoption or transfer is useful."
+      : "Return signal_decisions as an empty array when no watcher signals are supplied.",
+  ].join("\n");
+
+  let lastFailure = "unknown";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const rec = openRun(store, cfg.campaignId, "manager", {
+      idempotencyKey: `architect:${cycleId}:${attempt}`,
+      inputHash: sha256(canonicalJson({ packet, prior: prior?.plan ?? null })),
+    });
+    const run = await runWorker({
+      role: "architect",
+      prompt: attempt === 1 ? prompt : `${prompt}\n\nYour previous output was unusable (${lastFailure}). Return one complete JSON object only.`,
+      cwd: attemptDir,
+      attemptDir: join(attemptDir, attempt === 1 ? "architect" : `architect-retry-${attempt}`),
+      tools: [...(cfg.harness.domain.agentSearch === false ? [] : SEARCH_TOOLS), MEMORY_TOOL],
+      model: cfg.architectModel ?? cfg.managerModel,
+      timeoutMs: cfg.architectTimeoutMs,
+      campaignId: cfg.campaignId, cycleId, attemptId: rec.attemptId,
+      memory: workerMemory(cfg),
+      structuredOutput: "architect-plan",
+    });
+    usage.inputTokens += run.usage.inputTokens;
+    usage.outputTokens += run.usage.outputTokens;
+    usage.totalTokens += run.usage.totalTokens;
+    usage.costUsd += run.usage.costUsd;
+
+    const parsed = run.ok ? extractJson<ArchitectPlan>(run.finalText) : null;
+    const plan = parsed?.ok ? parsed.value : null;
+    const valid = Boolean(
+      plan?.program?.title && plan.program.thesis && plan.program.manager_brief
+      && plan.program.milestones?.length && plan.program.pivot_conditions?.length,
+    );
+    lastFailure = run.ok
+      ? parsed?.ok ? "architect plan missing required fields" : `architect_unparseable:${parsed?.error}`
+      : `architect_failed:${run.failure ?? "unknown"}`;
+    closeRun(store, rec, valid, {
+      exitCode: run.exitCode, failureCode: valid ? null : lastFailure,
+      modelSpec: { role: "macro-architect", model: run.model, provider: run.provider, usage: run.usage },
+    });
+    sealText(store, cfg.campaignId, rec.attemptId, "agent-trace",
+      run.trace.map((step) => JSON.stringify(step)).join("\n"),
+      join(attemptDir, "staging"), artifactRoot);
+
+    if (run.failure?.startsWith("PROVIDER_RATE_LIMITED")) break;
+
+    if (valid && plan) {
+      plan.program.review_after_experiments = normalizedReviewInterval(plan);
+      store.appendEvent({
+        campaignId: cfg.campaignId, aggregateKind: "program", aggregateId: `program:${cfg.campaignId}`,
+        aggregateRevision: 1, eventType: "architect.plan_registered", actorKind: "manager",
+        attemptId: rec.attemptId, idempotencyKey: `architect.plan:${cycleId}`,
+        payload: {
+          role: "macro-architect", plan, replaced: prior?.plan ?? null, experimentsSince,
+          trigger: signals.length ? "watcher_signal" : macroSteers.length ? "macro_steer" : prior ? "cadence" : "initial",
+          signalIds: signals.map((signal) => signal.ideaId), steerIds: macroSteers.map((steer) => steer.steer_id),
+        },
+      });
+      const supplied = new Set(signals.map((signal) => signal.ideaId));
+      const decided = new Set<string>();
+      for (const decision of plan.signal_decisions ?? []) {
+        if (!supplied.has(decision.idea_id) || decided.has(decision.idea_id)) continue;
+        markSignalsReviewed(store, cfg.campaignId, [decision.idea_id], decision.decision !== "reject");
+        store.appendEvent({
+          campaignId: cfg.campaignId, aggregateKind: "idea", aggregateId: decision.idea_id,
+          aggregateRevision: 1, eventType: "research.signal_reviewed", actorKind: "manager",
+          attemptId: rec.attemptId, idempotencyKey: `research.signal_reviewed:${cycleId}:${decision.idea_id}`,
+          payload: { decision: decision.decision, rationale: decision.rationale, program: plan.program.title },
+        });
+        decided.add(decision.idea_id);
+      }
+      // A schema-valid architect must account for every signal. Any omitted ID
+      // remains new and safely causes another boundary review rather than being
+      // silently forgotten.
+      if (macroSteers.length > 0) {
+        const consume = store.db.prepare(
+          "UPDATE attention_steers SET consumed_at=? WHERE campaign_id=? AND steer_id=? AND consumed_at IS NULL",
+        );
+        store.transact(() => {
+          for (const steer of macroSteers) consume.run(nowIso(), cfg.campaignId, steer.steer_id);
+        });
+      }
+      return { plan, refreshed: true };
+    }
+  }
+
+  // A transient architect failure must not erase an already registered program.
+  if (prior) return { plan: prior.plan, refreshed: false };
+  throw new Error(`macro architect could not establish a program: ${lastFailure}`);
+}
+
 /**
- * Deterministic, size-bounded context packet.
+ * Deterministic, evidence-rich context packet.
  *
- * Selection is bounded on purpose. An unbounded packet grows with the campaign
- * until it becomes the dominant cost and eventually breaks the spawn, and it
- * also buries the decision-relevant evidence in bulk. Selection is stable given
- * the same state, so two managers reading the same campaign see the same world.
+ * Requests are passed through files rather than command-line arguments, and Ox
+ * Alpha has a long context window. Keep substantially more history than the old
+ * 15 KB packet while preserving a stable relevance order.
  *
  * The mix is chosen so the manager cannot lose sight of what failed: replicated
  * and refuted claims are retained ahead of merely recent ones, because a
  * campaign that forgets its negative results re-proposes them.
  */
-const MAX_HYPOTHESES = 14;
-const MAX_EVIDENCE = 18;
-const MAX_LEADS = 6;
-
-/**
- * Hard ceiling on the whole context packet, in bytes.
- *
- * Item counts alone do not bound size: the packet grew with campaign history
- * and reached 20.8 KB by cycle 35, at which point the manager stopped finishing
- * inside its timeout and every mechanism cycle burned six minutes producing
- * nothing. Counts bound the number of things; only a byte budget bounds the
- * packet. Trimmed oldest-and-lowest-priority first, and the packet always says
- * how much it dropped, because a silently truncated context is a manager
- * reasoning from evidence it was never shown.
- */
-const MAX_PACKET_BYTES = 15_000;
-const MAX_FIELD_CHARS = 400;
+const MAX_HYPOTHESES = 200;
+const MAX_EVIDENCE = 300;
+const MAX_LEADS = 40;
+const MAX_FIELD_CHARS = 4_000;
 
 function clip(text: unknown, n = MAX_FIELD_CHARS): string {
   const s = String(text ?? "");
@@ -910,12 +1308,24 @@ function buildContextPacket(store: Store, cfg: CycleConfig, baseRevision: string
   }));
 
   // Recent literature leads, newest first and tightly bounded.
+  const watcherSubscription = readWatcherSubscription(store, cfg.campaignId);
+  const fallbackSourceTopics = watcherSubscription ? watcherTopics(store, watcherSubscription) : [];
   const leads = (store.db.prepare(
-    `SELECT canonical_url, title, retrieved_at, metadata_json FROM sources
+    `SELECT provider, canonical_url, title, retrieved_at, metadata_json FROM sources
      WHERE campaign_id = ? AND reliability = 'lead'
      ORDER BY retrieved_at DESC LIMIT ?`,
-  ).all(cfg.campaignId, MAX_LEADS) as any[])
+  ).all(cfg.campaignId, MAX_LEADS * 4) as any[])
     .filter((r) => {
+      let metadata: any = {};
+      try { metadata = JSON.parse(r.metadata_json ?? "{}"); } catch { /* none */ }
+      if (metadata.topic && !assessSourceRelevance(String(metadata.topic), {
+        title: r.title, abstract: String(metadata.abstract ?? ""),
+      }).keep) return false;
+      if (!metadata.topic && !String(r.provider ?? "").startsWith("agent:")
+          && !metadata.tool && fallbackSourceTopics.length > 0
+          && !fallbackSourceTopics.some((topic) => assessSourceRelevance(topic, {
+            title: r.title, abstract: String(metadata.abstract ?? ""),
+          }).keep)) return false;
       // THE DATE FENCE.
       //
       // Where the holdout is time, a source published after the scored window
@@ -929,11 +1339,12 @@ function buildContextPacket(store: Store, cfg: CycleConfig, baseRevision: string
       const asOf = h.domain.leadsAsOf;
       if (!asOf) return true;
       let published: string | null = null;
-      try { published = JSON.parse(r.metadata_json ?? "{}").published ?? null; } catch { /* none */ }
+      try { published = metadata.published ?? null; } catch { /* none */ }
       // A source with no date cannot be shown to be safe, so it is excluded.
       if (!published) return false;
       return published < asOf;
     })
+    .slice(0, MAX_LEADS)
     .map((r) => {
     let abstract = "";
     try { abstract = String(JSON.parse(r.metadata_json).abstract ?? ""); } catch { /* absent */ }
@@ -964,7 +1375,7 @@ function buildContextPacket(store: Store, cfg: CycleConfig, baseRevision: string
     editable_files: h.domain.candidateFiles,
     // The manager must see what it is optimising. Without this it proposed
     // changes the candidate already contained.
-    current_candidate: h.candidateSource(baseRevision),
+    current_candidate: h.candidateSource(baseRevision, 500_000, 900_000),
     current_candidate_note:
       "This is the CURRENT candidate at the base revision, including every replicated "
       + "improvement so far. Read it before proposing: a change it already contains cannot "
@@ -995,46 +1406,6 @@ function buildContextPacket(store: Store, cfg: CycleConfig, baseRevision: string
     },
   };
 
-  return fitPacket(packet);
-}
-
-/**
- * Trim a packet until it fits the byte budget.
- *
- * Drops prior evidence first, then prior hypotheses, both lowest-priority-last
- * (they are already sorted best-first). The candidate source and the metric
- * block are never trimmed: those are what the manager most needs and what it
- * previously did not have at all.
- */
-function fitPacket(packet: Record<string, any>): unknown {
-  const size = () => Buffer.byteLength(JSON.stringify(packet), "utf8");
-  let droppedLeads = 0;
-  let droppedEvidence = 0;
-  let droppedHypotheses = 0;
-
-  while (size() > MAX_PACKET_BYTES && packet.literature_leads.length > 0) {
-    packet.literature_leads.pop();
-    droppedLeads++;
-  }
-  while (size() > MAX_PACKET_BYTES && packet.prior_evidence.length > 3) {
-    packet.prior_evidence.pop();
-    droppedEvidence++;
-  }
-  while (size() > MAX_PACKET_BYTES && packet.prior_hypotheses.length > 4) {
-    packet.prior_hypotheses.pop();
-    droppedHypotheses++;
-  }
-
-  if (droppedLeads > 0 || droppedEvidence > 0 || droppedHypotheses > 0) {
-    packet.truncated.dropped_for_size = {
-      literature_leads: droppedLeads,
-      evidence: droppedEvidence,
-      hypotheses: droppedHypotheses,
-      budget_bytes: MAX_PACKET_BYTES,
-      note: "trimmed to fit the manager's context budget; the candidate source and metric "
-          + "definition are never trimmed",
-    };
-  }
   return packet;
 }
 

@@ -187,7 +187,7 @@ export function decide(
   if (budget.maxCycles > 0 && spend.cycles >= budget.maxCycles) {
     return stop("cycle_limit_reached", `cycle limit of ${budget.maxCycles} reached`);
   }
-  if (spend.consecutiveFailures >= budget.repairCap) {
+  if (budget.repairCap > 0 && spend.consecutiveFailures >= budget.repairCap) {
     return stop(
       // NOT "infrastructure failure". The three invalids that first triggered
       // this had three different causes - a kernel that would not compile, an
@@ -258,7 +258,8 @@ export function decide(
   const chosen = scored[0]!;
   // At least one parameter experiment is always allowed: a tiny campaign would
   // otherwise report the quota as spent before it began.
-  const parameterAllowance = Math.max(1, Math.floor(budget.maxCycles * budget.parameterQuota));
+  const quotaHorizon = budget.maxCycles > 0 ? budget.maxCycles : spend.cycles + 1;
+  const parameterAllowance = Math.max(1, Math.floor(quotaHorizon * budget.parameterQuota));
   const parameterQuotaExhausted = spend.parameterCycles >= parameterAllowance;
 
   return {

@@ -1,0 +1,58 @@
+# Builds and deploys the read-only research mirror.
+#
+# An explicit config rather than `gcloud run deploy --source`: that path selects
+# Buildpacks, which ignore a Dockerfile that is not named `Dockerfile` and try to
+# install the whole project — including a native SQLite module the mirror must
+# not contain and which fails to compile in that image.
+#
+# Every argument containing ${...} is quoted: unquoted, a substitution inside a
+# YAML flow sequence is parsed as the start of a mapping.
+
+substitutions:
+  _SERVICE: research-mirror
+  _REGION: us-central1
+  _DIRECTION: resource-adaptive-inference
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - "build"
+      - "--file=Dockerfile.mirror"
+      - "--tag=gcr.io/$PROJECT_ID/${_SERVICE}:$BUILD_ID"
+      - "--tag=gcr.io/$PROJECT_ID/${_SERVICE}:latest"
+      - "."
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - "push"
+      - "--all-tags"
+      - "gcr.io/$PROJECT_ID/${_SERVICE}"
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "${_SERVICE}"
+      - "--image=gcr.io/$PROJECT_ID/${_SERVICE}:$BUILD_ID"
+      - "--region=${_REGION}"
+      - "--platform=managed"
+      # Public by design: this is the shareable record of the research.
+      - "--allow-unauthenticated"
+      - "--port=8080"
+      - "--memory=512Mi"
+      - "--cpu=1"
+      # Scales to zero so an idle mirror costs nothing.
+      - "--min-instances=0"
+      - "--max-instances=3"
+      - "--set-env-vars=AR_DIRECTION=${_DIRECTION},GOOGLE_CLOUD_PROJECT=$PROJECT_ID"
+
+images:
+  - "gcr.io/$PROJECT_ID/${_SERVICE}:$BUILD_ID"
+  - "gcr.io/$PROJECT_ID/${_SERVICE}:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY

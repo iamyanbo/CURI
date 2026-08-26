@@ -54,6 +54,19 @@ a{color:inherit}
 .cell .s{font:10px var(--mono);color:var(--ink-3);margin-top:2px}
 .v.good{color:var(--good)} .v.bad{color:var(--bad)} .v.live{color:var(--live)}
 
+/* The campaign overview reads like an abstract: purpose, approach and evidence
+   standard in one passage, with the live experiment and steering beside it. */
+.readmegrid{display:grid;grid-template-columns:minmax(360px,1.55fr) minmax(320px,1fr)}
+.readmecol{padding:14px 16px;border-right:1px solid var(--line-soft);min-width:0}
+.readmecol:last-child{border-right:0}
+.readmek{font:9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin-bottom:6px}
+.readmetitle{font-size:15px;font-weight:600;letter-spacing:-.01em;margin-bottom:6px}
+.readmebody{font-size:12px;line-height:1.55;color:var(--ink-2)}
+.readmefacts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.readmefacts span{border:1px solid var(--line);padding:2px 6px;font:9px var(--mono);color:var(--ink-3)}
+.macrosteer{margin-top:13px;padding-top:12px;border-top:1px solid var(--line-soft)}
+@media(max-width:1050px){.readmegrid{grid-template-columns:1fr}.readmecol{border-right:0;border-bottom:1px solid var(--line-soft)}.readmecol:last-child{border-bottom:0}}
+
 .flow{display:flex;align-items:stretch;overflow-x:auto;padding:4px 2px}
 .node{position:relative;min-width:132px;flex:1;border:1px solid var(--line);
       background:var(--panel-2);padding:9px 11px;cursor:pointer}
@@ -80,7 +93,7 @@ a{color:inherit}
 .topo-wrap{position:relative;overflow:auto;background:
   linear-gradient(var(--line-soft) 1px,transparent 1px) 0 0/22px 22px,
   linear-gradient(90deg,var(--line-soft) 1px,transparent 1px) 0 0/22px 22px,var(--bg)}
-.topo{position:relative;width:1180px;height:250px;margin:8px auto}
+.topo{position:relative;width:1360px;height:270px;margin:8px auto}
 .edges{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
 .edge{stroke:var(--line);stroke-width:1.5;fill:none;marker-end:url(#ar)}
 .edge.hot{stroke:var(--live);stroke-width:2;marker-end:url(#arhot)}
@@ -92,12 +105,14 @@ a{color:inherit}
 .mod.active{border-color:var(--live);box-shadow:inset 2px 0 0 var(--live)}
 .mod.done{border-color:var(--line);opacity:.92}
 .mod.failed{border-color:var(--bad)}
+.mod.waiting{border-color:var(--warn)}
 .mod.idle{opacity:.5}
 .mod .k{display:flex;align-items:center;gap:6px;font:9px var(--mono);letter-spacing:.1em;
         text-transform:uppercase;color:var(--ink-3)}
 .mod .s{width:6px;height:6px;border-radius:50%;background:var(--ink-3);flex:none}
 .mod.active .s{background:var(--live);animation:pulse 1.4s ease-in-out infinite}
 .mod.done .s{background:var(--good)} .mod.failed .s{background:var(--bad)}
+.mod.waiting .s{background:var(--warn)}
 .mod .n{font-weight:600;font-size:12px;margin-top:4px}
 .mod .d{font:10px var(--mono);color:var(--ink-2);margin-top:3px;white-space:nowrap;
         overflow:hidden;text-overflow:ellipsis}
@@ -150,8 +165,8 @@ a{color:inherit}
 .detnote{font:11px var(--mono);color:var(--ink-3);padding:6px 0 2px}
 
 /* ---- agent execution piano roll -----------------------------------------
-   One lane per stage, time running left to right, every span the harness
-   recorded drawn in place. The trajectory below says WHAT the agent did; this
+   One lane per attempt, with model/tool/command spans kept in chronological
+   order on that lane. The trajectory below says WHAT the agent did; this
    says WHERE THE TIME WENT, which is a different and often more useful
    question - a cycle that spent 55s reasoning and 2s searching looks nothing
    like one that spent 5s reasoning and 90s in a shell.
@@ -162,18 +177,23 @@ a{color:inherit}
 .rollhd{display:flex;align-items:center;gap:10px;padding:8px 13px;
         border-bottom:1px solid var(--line-soft);font:10px var(--mono);color:var(--ink-3)}
 .rollhd .sp{margin-left:auto}
-.ruler{position:relative;height:18px;margin-left:104px;border-bottom:1px solid var(--line-soft)}
+.ruler{position:relative;height:18px;margin-left:132px;border-bottom:1px solid var(--line-soft)}
 .ruler i{position:absolute;top:0;bottom:0;border-left:1px solid var(--line-soft)}
 .ruler span{position:absolute;top:3px;left:4px;font:9px var(--mono);color:var(--ink-3)}
-.lane{display:grid;grid-template-columns:104px minmax(360px,1fr);
-      border-bottom:1px solid var(--line-soft);min-height:30px}
+.lane{display:grid;grid-template-columns:132px minmax(360px,1fr);
+      border-bottom:1px solid var(--line-soft);min-height:calc(12px + var(--bands,1) * 22px)}
 .lane:last-child{border-bottom:0}
 .lanename{padding:8px 10px;font:10px var(--mono);color:var(--ink-2);
-          border-right:1px solid var(--line-soft);white-space:nowrap;
+          border-right:1px solid var(--line-soft);white-space:normal;
           text-transform:uppercase;letter-spacing:.06em}
+.lanetitle{display:block}
+.lanetools{display:block;margin-top:4px;color:var(--warn);font:9px/1.35 var(--mono);
+           text-transform:none;letter-spacing:0;overflow-wrap:anywhere}
+.lane.error .lanename{color:var(--bad)}
 .lanetrack{position:relative;background-image:linear-gradient(to right,
-           var(--line-soft) 1px,transparent 1px);background-size:12.5% 100%}
-.span{position:absolute;top:6px;height:18px;min-width:3px;border-radius:2px;
+           var(--line-soft) 1px,transparent 1px);background-size:12.5% 100%;
+           min-height:calc(12px + var(--bands,1) * 22px)}
+.span{position:absolute;height:18px;min-width:3px;border-radius:2px;
       cursor:pointer;overflow:hidden;padding:2px 5px;
       font:9px var(--mono);color:#0b0f16;white-space:nowrap;opacity:.9}
 .span:hover{opacity:1;outline:1px solid var(--ink)}
@@ -183,6 +203,8 @@ a{color:inherit}
 .rolllegend span{display:flex;align-items:center;gap:5px}
 .playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--live);
           z-index:3;pointer-events:none}
+.traceintro{padding:8px 13px;border-bottom:1px solid var(--line-soft);
+            font:10px/1.45 var(--mono);color:var(--ink-3)}
 
 /* Plain-language context. A status word and an id tell a reader what the system
    decided and nothing about why, which makes the whole screen unreadable to
@@ -230,6 +252,7 @@ a{color:inherit}
 .shd:first-child{margin-top:0}
 .shd .k{font:10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--ink-2)}
 .shd .meta{margin-left:auto;font:10px var(--mono);color:var(--ink-3)}
+.shd.focus{border-bottom-color:var(--live);box-shadow:inset 2px 0 0 var(--live);padding-left:8px}
 .step{border-left:1px solid var(--line);padding:6px 0 6px 13px;margin-left:3px;position:relative}
 .step:before{content:"";position:absolute;left:-3.5px;top:12px;width:6px;height:6px;
              border-radius:50%;background:var(--ink-3)}
@@ -300,10 +323,49 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 <div class="wrap">
   <div class="top">
     <div><h1>Autoresearch</h1><div class="run" id="run">loading…</div></div>
-    <div class="state"><span class="dot" id="dot"></span><span id="stateTxt">—</span><button id="followbtn">follow live</button><button id="stopbtn" title="Honoured at the next cycle boundary, so a cycle in flight is never abandoned half-finished">Stop</button></div>
+    <div class="state"><span class="dot" id="dot"></span><span id="stateTxt">—</span><button id="followbtn">follow live</button><button id="stopbtn">Stop</button></div>
   </div>
 
   <div class="strip" id="strip"></div>
+
+  <div class="panel" id="readmePanel" style="margin-bottom:14px">
+    <div class="phd"><span class="t">Research overview</span>
+      <span class="label">plain-language abstract</span>
+      <span class="r" id="researchState"></span></div>
+    <div class="readmegrid">
+      <section class="readmecol">
+        <div class="readmek">What this research is doing</div>
+        <div class="readmetitle" id="readmeTitle">—</div>
+        <div class="readmebody" id="research">—</div>
+        <div class="readmefacts" id="readmeFacts"></div>
+      </section>
+      <section class="readmecol">
+        <div class="readmek">Current experiment</div>
+        <div id="readmeCurrent"></div>
+        <div class="macrosteer">
+          <div class="readmek">Steer the overall research</div>
+          <div id="pending"></div>
+          <textarea id="steertext" placeholder="Change the strategic direction, priorities, or mechanisms to investigate. The macro architect reviews this at the next safe boundary."></textarea>
+          <div style="margin-top:8px"><button class="go" id="send">Queue macro steer</button></div>
+          <div class="row" style="border:0;padding-top:8px" id="steernote"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:14px">
+    <div class="phd"><span class="t">Progress</span><span class="r" id="progNote"></span></div>
+    <div class="pb"><svg class="chart" id="chart"></svg>
+      <div class="legend" style="margin-top:9px">
+        <span><i class="sw" style="background:var(--good)"></i>replicated</span>
+        <span><i class="sw" style="background:var(--bad)"></i>refuted</span>
+        <span><i class="sw" style="background:var(--warn)"></i>invalid</span>
+        <span><i class="sw" style="background:var(--ink-3)"></i>inconclusive</span>
+        <span><i class="sw" style="background:var(--live)"></i>accepted baseline</span>
+        <span style="color:var(--ink-3)">hover a point for detail</span>
+      </div>
+    </div>
+  </div>
 
   <div class="panel">
     <div class="phd"><span class="t">Pipeline</span>
@@ -332,50 +394,42 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
     <div style="display:grid;gap:14px;min-width:0">
       <div class="panel" id="decision"></div>
       <div class="panel">
-        <div class="phd"><span class="t">Execution piano roll</span>
-          <span class="r" id="rollMeta"></span></div>
-        <div class="rollhd" id="rollhd"></div>
-        <div class="roll" id="roll"></div>
-        <div class="rolllegend" id="rolllegend"></div>
+        <div class="phd"><span class="t">Strategic control piano roll</span>
+          <span class="r" id="controlRollMeta"></span></div>
+        <div class="traceintro">Orchestrator control time and macro-architect work. These decide the research program and schedule the cycle.</div>
+        <div class="rollhd" id="controlRollhd"></div>
+        <div class="roll" id="controlRoll"></div>
+        <div class="rolllegend" id="controlRolllegend"></div>
       </div>
 
       <div class="panel">
-        <div class="phd"><span class="t">Trajectory</span><span class="r" id="trajMeta"></span></div>
-        <div class="traj" id="traj"><div class="empty">Select an experiment to see the agent's work.</div></div>
+        <div class="phd"><span class="t">Strategic control trace</span><span class="r" id="controlTrajMeta"></span></div>
+        <div class="traj" id="controlTraj"><div class="empty">Select an experiment to see orchestration and macro decisions.</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="phd"><span class="t">Experiment execution piano roll</span>
+          <span class="r" id="experimentRollMeta"></span></div>
+        <div class="traceintro">Micro-manager, executor, commands, compute and protected evaluation for this experiment.</div>
+        <div class="rollhd" id="experimentRollhd"></div>
+        <div class="roll" id="experimentRoll"></div>
+        <div class="rolllegend" id="experimentRolllegend"></div>
+      </div>
+
+      <div class="panel">
+        <div class="phd"><span class="t">Micro and experiment trace</span><span class="r" id="experimentTrajMeta"></span></div>
+        <div class="traj" id="experimentTraj"><div class="empty">Select an experiment to see implementation and evaluation decisions.</div></div>
       </div>
     </div>
 
     <div class="col3" style="display:grid;gap:14px;min-width:0">
-      <div class="panel">
-        <div class="phd"><span class="t">Steer</span></div>
-        <div class="pb">
-          <div id="pending"></div>
-          <textarea id="steertext" placeholder="What should the manager try next? Applied at the next cycle boundary and recorded as an intervention. It cannot change a threshold."></textarea>
-          <div style="margin-top:8px"><button class="go" id="send">Queue steer</button></div>
-          <div class="row" style="border:0;padding-top:8px" id="steernote"></div>
-        </div>
-      </div>
       <div class="panel">
         <div class="phd"><span class="t">Lane budget</span></div>
         <div class="pb" id="lanes"></div>
       </div>
       <div class="panel">
         <div class="phd"><span class="t">Where time goes</span><span class="r">trace-exclusive</span></div>
-        <div class="pb"><div class="bar" id="timebar"></div><div class="legend" id="timelegend"></div></div>
-      </div>
-    </div>
-  </div>
-
-  <div class="panel" style="margin-top:14px">
-    <div class="phd"><span class="t">Progress</span><span class="r" id="progNote"></span></div>
-    <div class="pb"><svg class="chart" id="chart"></svg>
-      <div class="legend" style="margin-top:9px">
-        <span><i class="sw" style="background:var(--good)"></i>replicated</span>
-        <span><i class="sw" style="background:var(--bad)"></i>refuted</span>
-        <span><i class="sw" style="background:var(--warn)"></i>invalid</span>
-        <span><i class="sw" style="background:var(--ink-3)"></i>inconclusive</span>
-        <span><i class="sw" style="background:var(--live)"></i>accepted baseline</span>
-        <span style="color:var(--ink-3)">hover a point for detail</span>
+        <div class="pb"><div class="bar" id="timebar"></div><div class="legend" id="timelegend"></div><div class="gloss" id="timenote" style="margin-top:9px"></div></div>
       </div>
     </div>
   </div>
@@ -397,7 +451,7 @@ td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
       </div>
       <div class="panel">
         <div class="phd"><span class="t">Sources</span>
-          <span class="r"><span id="srcCount"></span> · untrusted</span></div>
+          <span class="r"><span id="srcCount"></span> · unread leads until enrichment reads them, never evidence</span></div>
         <div class="pb"><div id="sources" style="max-height:340px;overflow:auto"></div></div>
       </div>
     </div>
@@ -449,8 +503,6 @@ const STATUS_HELP = {
 function laneHelp(l) { return LANE_HELP[l] || ""; }
 function statusHelp(st) { return STATUS_HELP[st] || ""; }
 
-const FLOW = ["manager", "executor", "tools", "shell", "compute", "evaluation"];
-
 let selected = null;
 let filter = null;
 let followLive = true;
@@ -464,32 +516,40 @@ async function get(p) {
 
 // ---- pipeline topology: node-link graph, draggable, live ------------------
 //
-// The eight cycle steps are the spine (MANAGE -> SEAL). `tools` and `shell`
+// The deterministic orchestrator is the control spine. Architect and manager
+// are model decisions it schedules; watcher/memory are information sidecars.
+// `tools` and `shell`
 // branch off the executor because they are what the worker does inside its own
 // step, and `replay` branches off evaluation because replication is a
 // cross-cycle decision the driver makes, not a stage of one cycle.
 const TOPO_NODES = [
-  { id: "manager",    label: "Manager",   step: 1, x: 20,   y: 20,  kind: "worker" },
-  { id: "contract",   label: "Contract",  step: 2, x: 190,  y: 20,  kind: "registered" },
-  { id: "executor",   label: "Executor",  step: 3, x: 360,  y: 20,  kind: "worker" },
-  { id: "shell",      label: "Shell",     step: 3, x: 190,  y: 148, kind: "worker" },
-  { id: "tools",      label: "Tools",     step: 3, x: 360,  y: 148, kind: "worker" },
-  { id: "classify",   label: "Classify",  step: 4, x: 530,  y: 20,  kind: "diff" },
-  { id: "compute",    label: "Compute",   step: 5, x: 700,  y: 20,  kind: "experiment" },
-  { id: "evaluation", label: "Evaluator", step: 6, x: 870,  y: 20,  kind: "protected" },
-  { id: "replay",     label: "Replay",    step: 6, x: 870,  y: 148, kind: "replication" },
-  { id: "judge",      label: "Judge",     step: 7, x: 1020, y: 148, kind: "pure fn" },
-  { id: "seal",       label: "Seal",      step: 8, x: 1020, y: 20,  kind: "evidence" },
+  { id: "orchestrator", label: "Orchestrator",    step: 1,  x: 20,   y: 20,  kind: "deterministic control" },
+  { id: "architect",    label: "Macro architect", step: 2,  x: 170,  y: 20,  kind: "program / pivots" },
+  { id: "manager",      label: "Micro manager",   step: 3,  x: 320,  y: 20,  kind: "next experiment" },
+  { id: "contract",     label: "Contract",        step: 4,  x: 470,  y: 20,  kind: "pre-registered" },
+  { id: "executor",     label: "Executor",        step: 5,  x: 620,  y: 20,  kind: "implementation" },
+  { id: "classify",     label: "Diff classifier", step: 6,  x: 770,  y: 20,  kind: "deterministic" },
+  { id: "compute",      label: "CUDA experiment", step: 7,  x: 920,  y: 20,  kind: "RTX 3060 Ti" },
+  { id: "evaluator",    label: "Evaluator",       step: 8,  x: 1070, y: 20,  kind: "protected" },
+  { id: "seal",         label: "Evidence ledger", step: 11, x: 1210, y: 20,  kind: "hash chained" },
+  { id: "watcher",      label: "Watcher",         step: 0,  x: 20,   y: 158, kind: "continuous / external" },
+  { id: "memory",       label: "Research memory", step: 0,  x: 170,  y: 158, kind: "sources / mechanisms" },
+  { id: "tools",        label: "Tools",           step: 5,  x: 620,  y: 158, kind: "worker calls" },
+  { id: "shell",        label: "Shell",           step: 5,  x: 770,  y: 158, kind: "commands" },
+  { id: "replay",       label: "Replication",     step: 9,  x: 1070, y: 158, kind: "independent variants" },
+  { id: "judge",        label: "Pure judge",      step: 10, x: 1210, y: 158, kind: "verdict" },
 ];
 
 const TOPO_EDGES = [
+  ["watcher", "memory"], ["memory", "architect"], ["memory", "manager"],
+  ["orchestrator", "architect"], ["orchestrator", "manager"], ["architect", "manager"],
   ["manager", "contract"], ["contract", "executor"], ["executor", "tools"],
   ["tools", "shell"], ["executor", "classify"], ["classify", "compute"],
-  ["compute", "evaluation"], ["evaluation", "replay"], ["evaluation", "seal"],
+  ["compute", "evaluator"], ["evaluator", "judge"], ["evaluator", "replay"],
   ["replay", "judge"], ["judge", "seal"],
 ];
 
-const POS_KEY = "autoresearch.topo.v1";
+const POS_KEY = "autoresearch.topo.v4";
 let topoBuilt = false;
 let topoPos = {};
 
@@ -615,10 +675,11 @@ function updateTopology(live) {
       // Worker-backed nodes report real recorded state and duration.
       cls += m.state === "active" ? "active"
            : m.state === "failed" ? "failed"
+           : m.state === "waiting" ? "waiting"
            : m.durationMs > 0 ? "done" : "idle";
-      text = m.state === "active" ? "running..."
+      text = m.meta || (m.state === "active" ? "running..."
            : m.durationMs > 0 ? ms(m.durationMs) + " / " + (m.count || 0) + "x"
-           : "idle";
+           : "idle");
     } else {
       // Deterministic stages have no worker attempt to read, so their state is
       // inferred from the step counter. Labelled honestly: this is the cycle's
@@ -698,7 +759,7 @@ function renderFilterBar() {
   if (cf) cf.onclick = () => { filter = null; refresh(); };
 }
 
-function renderTree(tree) {
+function renderTree(tree, live) {
   const nodes = (tree.nodes ?? []).filter((n) => !filter || n.status === filter);
   $("expCount").textContent = nodes.length + " shown";
   const groups = new Map();
@@ -724,14 +785,18 @@ function renderTree(tree) {
         + '<div class="v">' + (n.primary != null ? n2(n.primary) : "") + '</div></div>';
     }
   }
-  $("tree").innerHTML = html || '<div class="empty">no experiments match</div>';
+  $("tree").innerHTML = html || '<div class="empty">'
+    + (filter ? "No experiments match this filter."
+      : "No experiment has been registered yet. " + esc(live?.currentLabel || "The orchestrator is preparing the next cycle."))
+    + '</div>';
   document.querySelectorAll(".exp").forEach((el) => { el.onclick = () => select(el.dataset.id); });
 }
 
 function renderDecision(node) {
   if (!node) { $("decision").innerHTML = '<div class="empty" style="padding:20px">No experiment selected.</div>'; return; }
+  const direction = cache.s?.metric?.direction || "maximize";
   const gain = (typeof node.primary === "number" && typeof node.baseline === "number")
-    ? node.primary - node.baseline : null;
+    ? (direction === "maximize" ? node.primary - node.baseline : node.baseline - node.primary) : null;
   $("decision").innerHTML =
     '<div class="dtop"><div class="dtitle">' + esc(node.title) + '</div><div class="dmeta">'
     + '<span class="chip" style="color:' + (COLOUR[node.status] ?? "var(--ink-3)") + '">'
@@ -775,7 +840,36 @@ function renderDecision(node) {
 // the rest of the DOM alone.
 //
 // A full rebuild happens only when the selected cycle actually changes.
-let trajState = { id: null, seen: new Set(), stages: new Map() };
+function emptyTrajectoryView() { return { seen: new Set(), stages: new Map() }; }
+let trajState = { id: null, control: emptyTrajectoryView(), experiment: emptyTrajectoryView() };
+
+const TRACE_VIEWS = {
+  control: {
+    trajectoryHost: "controlTraj", trajectoryMeta: "controlTrajMeta",
+    rollHost: "controlRoll", rollHead: "controlRollhd",
+    rollMeta: "controlRollMeta", rollLegend: "controlRolllegend",
+  },
+  experiment: {
+    trajectoryHost: "experimentTraj", trajectoryMeta: "experimentTrajMeta",
+    rollHost: "experimentRoll", rollHead: "experimentRollhd",
+    rollMeta: "experimentRollMeta", rollLegend: "experimentRolllegend",
+  },
+};
+
+function stagesForView(c, viewName) {
+  const recorded = c.stages ?? [];
+  return viewName === "control"
+    ? [c.orchestrator, ...recorded.filter((stage) => stage.kind === "architect")].filter(Boolean)
+    : recorded.filter((stage) => stage.kind !== "architect");
+}
+
+function segmentsForView(c, viewName) {
+  const attempts = new Set(stagesForView(c, viewName)
+    .map((stage) => stage.attemptId).filter(Boolean));
+  return (c.timeline?.segments ?? []).filter((segment) => viewName === "control"
+    ? !segment.attemptId || attempts.has(segment.attemptId)
+    : Boolean(segment.attemptId) && attempts.has(segment.attemptId));
+}
 
 function stepKey(stageId, t) {
   return stageId + ":" + (t.seq ?? 0) + ":" + (t.kind ?? "");
@@ -789,8 +883,13 @@ function stepHtml(t, kind) {
     + '<div class="body">' + esc(String(t.content ?? "").slice(0, 4000)) + '</div></div>';
 }
 
+function stageDisplayName(kind) {
+  return ({ architect: "macro architect", manager: "micro manager",
+    orchestrator: "orchestrator" })[kind] || kind;
+}
+
 function stageHeaderHtml(st) {
-  return '<div class="shd" data-stage="' + esc(st.kind) + '"><span class="k">' + esc(st.kind) + '</span>'
+  return '<div class="shd" data-stage="' + esc(st.kind) + '"><span class="k">' + esc(stageDisplayName(st.kind)) + '</span>'
     + '<span style="color:' + (st.state === "failed" ? "var(--bad)" : "var(--ink-3)")
     + ';font:10px var(--mono)">' + esc(st.state)
     + (st.failureCode ? " · " + esc(st.failureCode) : "") + '</span>'
@@ -804,7 +903,9 @@ function stageHeaderHtml(st) {
 
 function deterministicHtml(st) {
   let html = "";
-  if ((st.checks ?? []).length) {
+  if (st.kind === "orchestrator") {
+    html += '<div class="detnote">Deterministic control decisions from the hash-chained event ledger:</div>';
+  } else if ((st.checks ?? []).length) {
     html += '<div class="detnote">The protected evaluator recomputed the metric'
       + (st.measured != null ? " as <b>" + n2(st.measured, 3) + "</b>" : "")
       + " and ran these checks:</div>";
@@ -825,35 +926,170 @@ function deterministicHtml(st) {
   return html;
 }
 
-async function renderTrajectory(id, focusModule) {
-  const host = $("traj");
-  const fresh = trajState.id !== id;
-  if (fresh) {
-    host.innerHTML = '<div class="empty">loading…</div>';
-    trajState = { id, seen: new Set(), stages: new Map() };
+function focusStage(moduleId, scroll = true) {
+  const stageAliases = {
+    evaluator: "evaluation", supervisor: "orchestrator",
+    tools: "executor", shell: "executor", classify: "executor",
+    contract: "manager", judge: "evaluation", seal: "evaluation", replay: "replay",
+  };
+  const wanted = stageAliases[moduleId] || moduleId;
+  document.querySelectorAll(".shd.focus").forEach((el) => el.classList.remove("focus"));
+  const header = [...document.querySelectorAll(".shd")]
+    .find((el) => el.dataset.stage === wanted);
+  if (header) {
+    header.classList.add("focus");
+    if (scroll) header.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
-  try {
-    const c = await get("/api/cycle?id=" + encodeURIComponent(id));
-    const stages = c.stages ?? [];
-    $("trajMeta").textContent = c.timeline
-      ? ms(c.timeline.durationMs) + " · " + stages.length + " stages" : "";
-    if (!stages.length) {
-      if (fresh) host.innerHTML = '<div class="empty">no trace yet</div>';
-      renderRoll(c, cache.live);
-      return;
-    }
-    if (fresh) host.innerHTML = "";
+  document.querySelectorAll(".span").forEach((el) =>
+    el.classList.toggle("sel", el.dataset.stage === wanted));
+}
 
-    for (const st of stages) {
+const ROLL_COLOUR = {
+  model_reasoning: "var(--live)", tool_execution: "var(--warn)",
+  command_execution: "#d18f5f", compute: "var(--violet)",
+  evaluation: "var(--good)", supervisor: "var(--ink-3)",
+  blocked: "#a67c52", queue: "#5f718d", idle: "var(--line)", error: "var(--bad)",
+};
+
+function summariseToolNames(names) {
+  const counts = new Map();
+  for (const name of names) counts.set(name, (counts.get(name) ?? 0) + 1);
+  return [...counts].map(([name, count]) => name + (count > 1 ? " ×" + count : "")).join(" · ");
+}
+
+function packRollSegments(segments, duration, trackWidth) {
+  const bandEnds = [];
+  return [...segments].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
+    .map((segment) => {
+      const left = Math.max(0, Math.min(100, Number(segment.startMs) / duration * 100));
+      const actual = Math.max(.35, Math.min(100 - left,
+        (Number(segment.endMs) - Number(segment.startMs)) / duration * 100));
+      const label = String(segment.label || segment.category);
+      const readable = Math.min(18, (label.length * 5.5 + 14) / Math.max(360, trackWidth) * 100);
+      const width = Math.min(100 - left, Math.max(actual, readable, segment.toolCallId ? 1.1 : .35));
+      let band = bandEnds.findIndex((end) => left >= end + .35);
+      if (band < 0) { band = bandEnds.length; bandEnds.push(0); }
+      bandEnds[band] = left + width;
+      return { segment, left, width, band };
+    });
+}
+
+function renderRoll(c, live, viewName) {
+  const view = TRACE_VIEWS[viewName];
+  const host = $(view.rollHost);
+  const head = $(view.rollHead);
+  const legend = $(view.rollLegend);
+  const timeline = c?.timeline;
+  const segments = segmentsForView(c, viewName);
+  const stages = stagesForView(c, viewName);
+  const duration = Math.max(1, Number(timeline?.durationMs ?? 0));
+  $(view.rollMeta).textContent = timeline
+    ? ms(duration) + " · " + segments.length + " timed spans" : "";
+  head.innerHTML = timeline?.accounting
+    ? '<span>exclusive wall-time</span><span class="sp">' + esc(timeline.accounting) + '</span>'
+    : "";
+  if (!segments.length) {
+    host.innerHTML = '<div class="empty" style="padding:13px">No timed spans recorded for this experiment.</div>';
+    legend.innerHTML = "";
+    return;
+  }
+
+  // Keep every attempt as one lane. Tool spans remain independently positioned
+  // and clickable, while their names are listed in the attempt label instead
+  // of creating a noisy child row for every read/edit/bash call.
+  const rows = [];
+  const claimed = new Set();
+  const orchestration = segments.filter((segment, index) => {
+    if (segment.attemptId) return false;
+    claimed.add(index); return true;
+  });
+  if (orchestration.length) rows.push({ key: "orchestrator", label: "orchestrator", stage: "orchestrator", segments: orchestration });
+  const totals = {};
+  for (const stage of stages) totals[stage.kind] = (totals[stage.kind] ?? 0) + 1;
+  const seenKinds = {};
+  for (const stage of stages.filter((item) => item.attemptId)) {
+    seenKinds[stage.kind] = (seenKinds[stage.kind] ?? 0) + 1;
+    const indexed = segments.map((segment, index) => ({ segment, index }))
+      .filter((item) => item.segment.attemptId === stage.attemptId);
+    if (!indexed.length) continue;
+    for (const item of indexed) claimed.add(item.index);
+    const suffix = totals[stage.kind] > 1 ? " · try " + seenKinds[stage.kind] : "";
+    const stageSegments = indexed.map((item) => item.segment);
+    const tools = stageSegments
+      .filter((segment) => segment.toolCallId)
+      .map((segment) => segment.toolName || segment.label || "tool");
+    rows.push({
+      key: stage.attemptId, label: stageDisplayName(stage.kind) + suffix, stage: stage.kind,
+      segments: stageSegments, tools,
+      error: stage.state === "failed" || Boolean(stage.failureCode)
+        || stageSegments.some((segment) => Boolean(segment.isError)),
+    });
+  }
+  const remaining = segments.filter((_segment, index) => !claimed.has(index));
+  for (const stage of [...new Set(remaining.map((segment) => segment.stage || "orchestrator"))]) {
+    rows.push({ key: "extra:" + stage, label: stage, stage, segments: remaining.filter((segment) => (segment.stage || "orchestrator") === stage) });
+  }
+  let html = '<div class="ruler">';
+  for (let tick = 0; tick <= 4; tick++) {
+    const left = tick * 25;
+    html += '<i style="left:' + left + '%"><span>' + ms(duration * tick / 4) + '</span></i>';
+  }
+  html += "</div>";
+  for (const row of rows) {
+    const placements = packRollSegments(row.segments, duration, host.clientWidth - 132);
+    const bands = Math.max(1, ...placements.map((item) => item.band + 1));
+    const toolSummary = summariseToolNames(row.tools ?? []);
+    html += '<div class="lane' + (row.error ? " error" : "")
+      + '" style="--bands:' + bands + '"><div class="lanename"><span class="lanetitle">' + esc(row.label) + '</span>'
+      + (toolSummary ? '<span class="lanetools" title="' + esc((row.tools ?? []).join(" · ")) + '">' + esc(toolSummary) + '</span>' : "")
+      + '</div><div class="lanetrack" style="--bands:' + bands + '">';
+    for (const placement of placements) {
+      const segment = placement.segment;
+      const clickStage = segment.stage === "supervisor" ? "orchestrator" : (segment.stage || row.stage);
+      html += '<div class="span' + (segment.toolCallId ? " toolspan" : "") + '" data-stage="' + esc(clickStage) + '" style="left:'
+        + placement.left + '%;width:' + placement.width + '%;top:' + (6 + placement.band * 22) + 'px;background:'
+        + (ROLL_COLOUR[segment.category] || "var(--ink-3)") + '" title="'
+        + esc((segment.label || segment.category) + " · " + ms(segment.endMs - segment.startMs)
+          + (segment.isError ? " · error" : "")
+          + (segment.content ? " · " + String(segment.content).slice(0, 180) : "")) + '">'
+        + esc(segment.label || segment.category) + '</div>';
+    }
+    const isLive = live?.hypothesisId === selected && !c.stages?.every((stage) => stage.completedAt);
+    if (isLive) html += '<i class="playhead" style="left:calc(100% - 1px)"></i>';
+    html += "</div></div>";
+  }
+  host.innerHTML = html;
+  host.querySelectorAll(".span").forEach((span) => {
+    span.onclick = () => focusStage(span.dataset.stage);
+  });
+  const categories = [...new Set(segments.map((segment) => segment.category))];
+  legend.innerHTML = categories.map((category) => '<span><i class="sw" style="background:'
+    + (ROLL_COLOUR[category] || "var(--ink-3)") + '"></i>'
+    + esc(String(category).replace(/_/g, " ")) + '</span>').join("");
+}
+
+function renderTrajectoryPanel(c, viewName, fresh) {
+  const view = TRACE_VIEWS[viewName];
+  const host = $(view.trajectoryHost);
+  const state = trajState[viewName];
+  const stages = stagesForView(c, viewName);
+  $(view.trajectoryMeta).textContent = c.timeline
+    ? ms(c.timeline.durationMs) + " · " + stages.length + " stage" + (stages.length === 1 ? "" : "s") : "";
+  if (!stages.length) {
+    host.innerHTML = '<div class="empty">no trace yet</div>';
+    return;
+  }
+  if (fresh) host.innerHTML = "";
+  for (const st of stages) {
       const stageId = st.attemptId || (st.kind + ":" + st.runId);
-      let block = trajState.stages.get(stageId);
+      let block = state.stages.get(stageId);
       if (!block) {
         // New stage: header plus a container its steps get appended into.
         const wrap = document.createElement("div");
         wrap.innerHTML = stageHeaderHtml(st) + '<div class="stagesteps"></div>';
         host.appendChild(wrap);
         block = { wrap, steps: wrap.querySelector(".stagesteps"), header: wrap.querySelector(".shd") };
-        trajState.stages.set(stageId, block);
+        state.stages.set(stageId, block);
         if (st.isAgent === false) block.steps.innerHTML = deterministicHtml(st);
       } else {
         // Existing stage: only its header can change (state, duration, tokens).
@@ -872,22 +1108,39 @@ async function renderTrajectory(id, focusModule) {
       // Append only steps we have not drawn.
       for (const t of st.trace ?? []) {
         const k = stepKey(stageId, t);
-        if (trajState.seen.has(k)) continue;
-        trajState.seen.add(k);
+        if (state.seen.has(k)) continue;
+        state.seen.add(k);
         const holder = document.createElement("div");
         holder.innerHTML = stepHtml(t, st.kind);
         if (holder.firstChild) block.steps.appendChild(holder.firstChild);
       }
     }
-    renderRoll(c, cache.live);
+}
+
+async function renderTrajectory(id, focusModule) {
+  const fresh = trajState.id !== id;
+  if (fresh) {
+    for (const view of Object.values(TRACE_VIEWS)) {
+      $(view.trajectoryHost).innerHTML = '<div class="empty">loading…</div>';
+    }
+    trajState = { id, control: emptyTrajectoryView(), experiment: emptyTrajectoryView() };
+  }
+  try {
+    const c = await get("/api/cycle?id=" + encodeURIComponent(id));
+    renderTrajectoryPanel(c, "control", fresh);
+    renderTrajectoryPanel(c, "experiment", fresh);
+    renderRoll(c, cache.live, "control");
+    renderRoll(c, cache.live, "experiment");
     if (focusModule) focusStage(focusModule, false);
   } catch (e) {
-    if (fresh) host.innerHTML = '<div class="err">' + esc(e.message) + "</div>";
+    if (fresh) for (const view of Object.values(TRACE_VIEWS)) {
+      $(view.trajectoryHost).innerHTML = '<div class="err">' + esc(e.message) + "</div>";
+    }
   }
 }
 
 function select(id, focusModule, pin = true) {
-  if (id !== selected) trajState = { id: null, seen: new Set(), stages: new Map() };
+  if (id !== selected) trajState = { id: null, control: emptyTrajectoryView(), experiment: emptyTrajectoryView() };
   selected = id;
   if (pin) followLive = false;
   renderDecision((cache.tree?.nodes ?? []).find((n) => n.id === id));
@@ -945,6 +1198,17 @@ async function refresh() {
       get("/api/summary"), get("/api/tree"), get("/api/progress"),
       get("/api/live").catch(() => ({ modules: {} })),
     ]);
+    const campaignChanged = Boolean(cache.s?.campaign && cache.s.campaign !== s.campaign);
+    if (campaignChanged) {
+      selected = null;
+      filter = null;
+      followLive = true;
+      trajState = { id: null, seen: new Set(), stages: new Map() };
+      $("decision").innerHTML = '<div class="empty" style="padding:20px">Waiting for the first experiment.</div>';
+      $("traj").innerHTML = '<div class="empty">No trajectory yet.</div>';
+      $("roll").innerHTML = '<div class="empty" style="padding:13px">No timed spans yet.</div>';
+      $("rolllegend").innerHTML = "";
+    }
     cache = { s, tree, progress, live };
 
     $("run").innerHTML = "<b>" + esc(s.campaign) + "</b> · " + esc(s.model)
@@ -966,16 +1230,20 @@ async function refresh() {
         : "no cycle is running";
     }
     $("dot").className = "dot" + (s.status === "running" ? " running" : "");
+    renderRunControl(s);
 
     const st = s.statuses ?? {};
-    const first = progress[0]?.baseline;
+    const first = s.startingBaseline;
     const gain = (typeof first === "number" && typeof s.baselinePrimary === "number")
-      ? s.baselinePrimary - first : null;
+      ? (s.metric?.direction === "minimize"
+          ? first - s.baselinePrimary : s.baselinePrimary - first) : null;
     $("strip").innerHTML =
-      '<div class="cell"><div class="k">baseline</div><div class="v live">' + n2(s.baselinePrimary)
-      + '</div><div class="s">' + (gain != null ? "+" + n2(gain) + " total" : "") + '</div></div>'
-      + '<div class="cell"><div class="k">holdout</div><div class="v">' + n2(s.baselineSecondary)
-      + '</div><div class="s">hidden shapes</div></div>'
+      '<div class="cell"><div class="k">' + esc(s.metric?.name || "primary metric")
+      + '</div><div class="v live">' + n2(s.baselinePrimary, 3)
+      + '</div><div class="s">' + (gain != null ? (gain >= 0 ? "+" : "") + n2(gain, 3) + " total" : "") + '</div></div>'
+      + '<div class="cell"><div class="k">' + esc(s.metric?.secondaryLabel || "secondary metric")
+      + '</div><div class="v">' + n2(s.baselineSecondary, 3)
+      + '</div><div class="s">' + (s.metric?.hasSecondary ? "evaluator-reported" : "pass/fail gates") + '</div></div>'
       + '<div class="cell"><div class="k">replicated</div><div class="v good">' + (st.replicated ?? 0)
       + '</div><div class="s">multi-seed</div></div>'
       + '<div class="cell"><div class="k">refuted</div><div class="v bad">' + (st.refuted ?? 0)
@@ -988,7 +1256,39 @@ async function refresh() {
       + '</div><div class="s">' + (st.replicated ?? 0) + ' validated so far</div></div>';
 
     updateTopology(live);
-    renderTree(tree);
+    renderTree(tree, live);
+
+    const research = s.research ?? {};
+    const readme = s.readme ?? {};
+    const watcher = research.watcher;
+    const ideas = research.ideas ?? {};
+    const pendingIdeas = Number(ideas.new ?? 0);
+    $("researchState").textContent = String(s.status ?? "unknown").replace(/_/g, " ");
+    $("readmeTitle").textContent = readme.title || s.campaign;
+    $("research").textContent = readme.abstract || readme.objective || "No campaign objective recorded.";
+    $("readmeFacts").innerHTML = [
+      readme.metric?.name ? ((readme.metric.direction === "maximize" ? "higher" : "lower")
+        + " " + readme.metric.name + " is better") : null,
+      (s.statuses?.replicated ?? 0) + " independently replicated result"
+        + ((s.statuses?.replicated ?? 0) === 1 ? "" : "s"),
+      watcher?.enabled ? "continuous literature watcher on" : null,
+    ].filter(Boolean).map((fact) => '<span>' + esc(fact) + '</span>').join("");
+    const hypothesis = readme.currentHypothesis;
+    $("readmeCurrent").innerHTML = hypothesis
+      ? '<div class="readmetitle">' + esc(hypothesis.title) + '</div>'
+        + '<div class="readmebody">' + esc(hypothesis.motivation ?? hypothesis.mechanism ?? "") + '</div>'
+        + '<div class="readmefacts"><span>' + esc(hypothesis.lane) + ' lane</span><span>'
+          + esc(hypothesis.status) + '</span><span>' + esc(live.currentLabel || "between stages") + '</span></div>'
+        + (hypothesis.falsifier ? '<div class="gloss" style="margin-top:9px">This idea fails if: '
+          + esc(hypothesis.falsifier) + '</div>' : "")
+      : '<div class="readmebody">' + esc(live.currentLabel || "Waiting for the first bounded experiment.") + '</div>';
+    $("readmeCurrent").innerHTML += watcher
+      ? '<div class="row" style="margin-top:10px">Watcher ' + (watcher.enabled ? '<span class="good">on</span>' : 'off')
+          + '<div class="m">' + (watcher.topics?.length ? esc(watcher.topics.join(" · ")) : "automatic campaign topics")
+          + ' · every ' + dur(Number(watcher.intervalSeconds ?? 0) * 1000) + '</div></div>'
+        + '<div class="row">Research memory<div class="m">' + esc(research.memoryRetrievals ?? 0)
+          + ' retrievals · ' + pendingIdeas + ' new watcher signal' + (pendingIdeas === 1 ? '' : 's') + '</div></div>'
+      : '<div class="row" style="margin-top:10px">Watcher not configured</div>';
 
     if (followLive && live.hypothesisId) {
       // Follow the running cycle: re-read its trajectory every tick so the
@@ -998,6 +1298,9 @@ async function refresh() {
       renderTrajectory(selected, live.currentModule || undefined);
     } else if (selected) {
       renderDecision((tree.nodes ?? []).find((n) => n.id === selected));
+    } else {
+      $("decision").innerHTML = '<div class="empty" style="padding:20px">'
+        + esc(live.currentLabel || "Waiting for the orchestrator.") + '</div>';
     }
 
     const measured = (tree.nodes ?? []).filter((n) => typeof n.primary === "number")
@@ -1032,20 +1335,23 @@ async function refresh() {
 
     const tot = (s.intervals ?? []).reduce((a, b) => a + Number(b.ms || 0), 0) || 1;
     const tcol = { model_reasoning: "var(--live)", tool_execution: "var(--warn)",
-                   compute: "var(--violet)", evaluation: "var(--good)",
-                   supervisor: "var(--ink-3)", unknown: "var(--line)" };
+                   command_execution: "#d18f5f", compute: "var(--violet)", evaluation: "var(--good)",
+                   supervisor: "var(--ink-3)", blocked: "#a67c52", queue: "#5f718d",
+                   idle: "var(--line)", error: "var(--bad)", unknown: "var(--line)" };
     $("timebar").innerHTML = (s.intervals ?? []).map((i) =>
       '<i style="width:' + ((i.ms / tot) * 100) + '%;background:' + (tcol[i.category] ?? "var(--line)") + '"></i>').join("");
     $("timelegend").innerHTML = (s.intervals ?? []).map((i) =>
       '<span><i class="sw" style="background:' + (tcol[i.category] ?? "var(--line)") + '"></i>'
       + esc(i.category) + " " + ((i.ms / tot) * 100).toFixed(0) + "%</span>").join("");
+    $("timenote").textContent = s.intervalAccounting?.note || "";
 
-    $("pending").innerHTML = s.pendingSteer
-      ? '<div class="pending"><span class="k">queued for the next cycle</span>'
-        + esc(s.pendingSteer.text)
+    const pendingMacro = s.readme?.pendingMacroSteers ?? [];
+    $("pending").innerHTML = pendingMacro.length
+      ? '<div class="pending"><span class="k">queued for macro review at the next safe boundary</span>'
+        + pendingMacro.map((steer) => '<div>' + esc(steer.text) + '</div>').join("")
         + '<div style="margin-top:7px"><button id="clear">Withdraw</button></div></div>' : "";
     if ($("clear")) $("clear").onclick = async () => {
-      await fetch("/api/steer", { method: "DELETE" }); refresh();
+      await fetch("/api/steer?scope=macro", { method: "DELETE" }); refresh();
     };
 
     const events = await get("/api/trace").catch(() => []);
@@ -1088,10 +1394,10 @@ $("send").onclick = async () => {
   try {
     const r = await fetch("/api/steer", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, scope: "macro" }),
     });
     $("steernote").textContent = r.ok
-      ? "Queued. Applied at the next cycle boundary and recorded as an intervention."
+      ? "Queued for the macro architect. It will review the overall direction at the next safe cycle boundary."
       : "Could not queue that steer.";
     if (r.ok) $("steertext").value = "";
   } finally { $("send").disabled = false; refresh(); }
@@ -1114,17 +1420,44 @@ document.getElementById("followbtn").onclick = () => {
   refresh();
 };
 
+// One control for the pipeline's run state. It follows the live process rather
+// than the recorded status, because a campaign killed mid-cycle still reads
+// 'running' in the database and offering "Stop" for it would do nothing.
+// While a stop is pending the button stays out of the way: the campaign is
+// still working through the cycle in flight and neither action applies yet.
+let runControlBusy = false;
+
+function renderRunControl(s) {
+  const b = $("stopbtn");
+  if (!b || runControlBusy) return;
+  const running = s.live === "running";
+  b.dataset.mode = running ? "stop" : "resume";
+  b.disabled = false;
+  b.textContent = running ? "Stop" : "Resume";
+  b.title = running
+    ? "Honoured at the next cycle boundary, so a cycle in flight is never abandoned half-finished"
+    : "Relaunch this campaign from its accepted baseline; earlier cycles and claims are kept";
+}
+
 document.getElementById("stopbtn").onclick = async () => {
-  const b = document.getElementById("stopbtn");
+  const b = $("stopbtn");
+  const resuming = b.dataset.mode === "resume";
+  const previous = b.textContent;
+  runControlBusy = true;
   b.disabled = true;
-  b.textContent = "Stopping…";
+  b.textContent = resuming ? "Resuming…" : "Stopping…";
   try {
-    await fetch("/api/stop", { method: "POST" });
-    b.textContent = "Stop requested";
+    const r = await fetch(resuming ? "/api/resume" : "/api/stop", { method: "POST" });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || ("HTTP " + r.status));
+    // A stop is only a request; a resume has already started a process. Either
+    // way the next refresh reports the truth, so say only what is known now.
+    b.textContent = resuming ? "Resumed" : "Stop requested";
   } catch (e) {
-    b.textContent = "Stop";
-    b.disabled = false;
+    b.textContent = previous;
+    b.title = String(e && e.message ? e.message : e);
   }
+  runControlBusy = false;
   refresh();
 };
 

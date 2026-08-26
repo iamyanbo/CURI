@@ -29,6 +29,8 @@ export type UiTimeCategory =
   | "queue"
   | "blocked"
   | "human"
+  | "idle"
+  | "error"
   | "unknown";
 
 export interface TraceSegment {
@@ -43,7 +45,7 @@ export interface TraceSegment {
 }
 
 const COMMAND_TOOLS = new Set([
-  "bash", "shell", "terminal", "exec", "command", "cmd", "powershell",
+  "bash", "run", "shell", "terminal", "exec", "command", "cmd", "powershell",
   "exec_command", "shell_command",
 ]);
 

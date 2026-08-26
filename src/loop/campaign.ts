@@ -21,8 +21,10 @@ import { closeRun, openRun, recordEvidence } from "./persist.js";
 import { chargeCycle, decide, deriveBelief, type CampaignBudget, type StopReason } from "./portfolio.js";
 import { normaliseCampaignConfig, nowIso, sha256, type Store } from "../store/store.js";
 import { formatDuration } from "../trace/intervals.js";
-import { clearStopRequest, stopRequested } from "../daemon.js";
+import { clearStopRequest, processStartId, stopRequested } from "../daemon.js";
 import { calibrate, measuredFloor, recordCalibration } from "./calibrate.js";
+import { ProgressHeartbeat } from "../supervision/progress-heartbeat.js";
+import { observeBlockingOperation } from "../supervision/progress-heartbeat.js";
 
 export interface CampaignOptions {
   budget: CampaignBudget;
@@ -175,7 +177,7 @@ STOP: operator_stop — ${requested.reason}`);
         hypothesisId: null, contractId: null,
         declaredChangeClass: null, actualChangeClass: null, classMismatch: false,
         primaryValue: null, holdoutValue: null,
-        usage: { manager: NO_USAGE, executor: NO_USAGE },
+        usage: { architect: NO_USAGE, manager: NO_USAGE, executor: NO_USAGE },
         abortReason: "cycle_threw", durationMs: 0, lane: decision.lane!,
         citable: false, missingCitations: [], costUsd: 0,
       };
@@ -192,6 +194,12 @@ STOP: operator_stop — ${requested.reason}`);
     chargeCycle(store, campaignId, decision.lane!, result.costUsd, result.durationMs, {
       chargeLaneRun: result.status !== "aborted",
     });
+
+    if (result.status === "aborted" && result.abortReason?.startsWith("provider_rate_limited")) {
+      consecutiveAborts = 0;
+      await waitForProviderQuota(opts, result.abortReason, log);
+      continue;
+    }
 
     if (result.status === "aborted") {
       consecutiveAborts++;
@@ -227,6 +235,40 @@ STOP: repeated_aborted_cycles — ${consecutiveAborts} in a row, so no research 
       await replicate(store, opts, result, log);
     }
   }
+}
+
+async function waitForProviderQuota(
+  opts: CampaignOptions,
+  reason: string,
+  log: (line: string) => void,
+): Promise<void> {
+  const now = Date.now();
+  const daily = reason.includes("free-models-per-day");
+  const nextUtc = Date.UTC(
+    new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate() + 1,
+  ) + 30_000;
+  const resumeAt = daily ? nextUtc : now + 5 * 60_000;
+  const stateDir = opts.stateDir ?? join(opts.cycleDefaults.projectRoot, ".autoresearch");
+  const heartbeat = new ProgressHeartbeat(
+    join(stateDir, "attempts", "provider-wait", opts.cycleDefaults.campaignId, "heartbeat.json"),
+    { campaignId: opts.cycleDefaults.campaignId, cycleId: "provider-wait", processStartId: processStartId(process.pid) },
+  );
+  log(`  provider quota unavailable; pausing without spending attempts until ${new Date(resumeAt).toISOString()}`);
+
+  while (Date.now() < resumeAt) {
+    if (opts.stateDir && stopRequested(opts.stateDir)) {
+      heartbeat.complete("operator requested stop during provider wait");
+      return;
+    }
+    const remaining = resumeAt - Date.now();
+    heartbeat.activity(
+      "waiting_external",
+      `OpenRouter quota cooldown; resume in ${Math.max(0, Math.ceil(remaining / 60_000))}m`,
+      null,
+    );
+    await new Promise((resolve) => setTimeout(resolve, Math.min(60_000, Math.max(1, remaining))));
+  }
+  heartbeat.complete("provider cooldown complete");
 }
 
 /**
@@ -303,7 +345,15 @@ function advanceBaseline(
   }
 
   const from = baseRevisionOf(store, cfg.campaignId);
-  const commit = cfg.harness.advance(from, diffText, `advance: ${result.hypothesisId}`);
+  const contract = store.db.prepare(
+    `SELECT baseline_hash FROM contracts WHERE hypothesis_id = ? ORDER BY revision DESC LIMIT 1`,
+  ).get(result.hypothesisId) as { baseline_hash: string } | undefined;
+  // A compound program's final diff is relative to its last validated
+  // checkpoint. Committing it on the campaign baseline would silently omit all
+  // earlier milestones; materialise from the contract's exact implementation
+  // base, then advance the public baseline to the resulting cumulative commit.
+  const materialisationBase = contract?.baseline_hash ?? from;
+  const commit = cfg.harness.advance(materialisationBase, diffText, `advance: ${result.hypothesisId}`);
   if (!commit.ok) {
     log(`  baseline NOT advanced: ${commit.failure}`);
     return;
@@ -314,8 +364,8 @@ function advanceBaseline(
       .run(commit.revision, cfg.campaignId);
     s.db.prepare(
       `UPDATE contracts SET status = 'superseded'
-       WHERE status = 'registered' AND baseline_hash = ? AND hypothesis_id <> ?`,
-    ).run(from, result.hypothesisId);
+       WHERE status = 'registered' AND hypothesis_id <> ?`,
+    ).run(result.hypothesisId);
     if (result.primaryValue !== null && Number.isFinite(result.primaryValue)) {
       const cfgRow = s.db.prepare("SELECT config_json FROM campaigns WHERE campaign_id = ?")
         .get(cfg.campaignId) as { config_json: string };
@@ -329,7 +379,7 @@ function advanceBaseline(
       campaignId: cfg.campaignId, aggregateKind: "campaign", aggregateId: cfg.campaignId,
       aggregateRevision: 2, eventType: "baseline.advanced", actorKind: "supervisor",
       idempotencyKey: `baseline.advanced:${result.hypothesisId}`,
-      payload: { from, to: commit.revision, hypothesisId: result.hypothesisId,
+      payload: { from, materialisationBase, to: commit.revision, hypothesisId: result.hypothesisId,
                  newBaselineBpc: result.primaryValue },
     });
   });
@@ -383,6 +433,7 @@ async function runReplications(
     });
 
     const pinnedBaseRevision = baseRevisionOf(store, cfg.campaignId);
+    const candidateBaseRevision = registeredBaseRevision(store, result.hypothesisId!) ?? pinnedBaseRevision;
     let variantBaseline = cfg.baselinePrimary;
     let variantBaselineFailure: string | null = null;
 
@@ -401,19 +452,29 @@ async function runReplications(
         variantBaselineFailure = builtBaseline.failure ?? "paired baseline worktree unavailable";
       } else {
         try {
-          const baselineExp = h.run(builtBaseline.worktree, baselineStaging, cfg.experimentTimeoutMs);
+          const baselineExp = observeBlockingOperation(
+            join(baselineStaging, "compute", "heartbeat.json"),
+            { campaignId: cfg.campaignId, cycleId: result.cycleId, attemptId: rec.attemptId, processStartId: processStartId(process.pid) },
+            `paired baseline experiment ${variant.label}`,
+            () => h.run(builtBaseline.worktree!, baselineStaging, cfg.experimentTimeoutMs),
+          );
           if (!baselineExp.ok || !baselineExp.outputPath) {
             variantBaselineFailure = baselineExp.failureCode ?? "paired baseline experiment failed";
           } else {
-            const baselineEval = h.evaluate({
-              worktree: builtBaseline.worktree,
-              outputPath: baselineExp.outputPath,
+            const baselineEval = observeBlockingOperation(
+              join(baselineStaging, "evaluation", "heartbeat.json"),
+              { campaignId: cfg.campaignId, cycleId: result.cycleId, attemptId: rec.attemptId, processStartId: processStartId(process.pid) },
+              `paired baseline evaluator ${variant.label}`,
+              () => h.evaluate({
+              worktree: builtBaseline.worktree!,
+              outputPath: baselineExp.outputPath!,
               stagingDir: baselineStaging,
               baselinePrimary: 0,
               baselineSecondary: null,
               supportDelta: 0,
               timeoutMs: cfg.evaluatorTimeoutMs,
-            });
+              }),
+            );
             if (baselineEval.ok && baselineEval.primary !== null && Number.isFinite(baselineEval.primary)) {
               variantBaseline = baselineEval.primary;
               log(`    ${variant.label}: paired baseline ${variantBaseline.toFixed(6)}`);
@@ -428,20 +489,30 @@ async function runReplications(
     }
 
     const { worktree, failure } = h.reproduce(
-      id, pinnedBaseRevision, diffText, variant.configPatch,
+      id, candidateBaseRevision, diffText, variant.configPatch,
     );
 
     let ok = false;
     let value: number | null = null;
     if (worktree && !failure) {
-      const exp = h.run(worktree, staging, cfg.experimentTimeoutMs);
+      const exp = observeBlockingOperation(
+        join(staging, "compute", "heartbeat.json"),
+        { campaignId: cfg.campaignId, cycleId: result.cycleId, attemptId: rec.attemptId, processStartId: processStartId(process.pid) },
+        `replication experiment ${variant.label}`,
+        () => h.run(worktree, staging, cfg.experimentTimeoutMs),
+      );
       if (exp.ok && exp.outputPath) {
-        const ev = h.evaluate({
-          worktree, outputPath: exp.outputPath, stagingDir: staging,
+        const ev = observeBlockingOperation(
+          join(staging, "evaluation", "heartbeat.json"),
+          { campaignId: cfg.campaignId, cycleId: result.cycleId, attemptId: rec.attemptId, processStartId: processStartId(process.pid) },
+          `replication evaluator ${variant.label}`,
+          () => h.evaluate({
+          worktree, outputPath: exp.outputPath!, stagingDir: staging,
           baselinePrimary: variantBaseline,
           baselineSecondary: cfg.baselineSecondary ?? null,
           supportDelta, timeoutMs: cfg.evaluatorTimeoutMs,
-        });
+          }),
+        );
         value = ev.primary;
         // Leakage is a property of the CANDIDATE, not of a single run, so it is
         // pooled below instead of being able to kill the claim here. Judging it
@@ -599,6 +670,13 @@ function registeredSupportDelta(store: Store, hypothesisId: string): number {
     .get(hypothesisId) as { threshold_json: string } | undefined;
   if (!row) return Number.POSITIVE_INFINITY;
   return JSON.parse(row.threshold_json).support_delta ?? Number.POSITIVE_INFINITY;
+}
+
+function registeredBaseRevision(store: Store, hypothesisId: string): string | null {
+  const row = store.db.prepare(
+    "SELECT baseline_hash FROM contracts WHERE hypothesis_id = ? ORDER BY revision DESC LIMIT 1",
+  ).get(hypothesisId) as { baseline_hash: string } | undefined;
+  return row?.baseline_hash ?? null;
 }
 
 function baseRevisionOf(store: Store, campaignId: string): string {

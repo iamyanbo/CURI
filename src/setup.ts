@@ -31,7 +31,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { runDoctor, REQUIRED_CHEAT_KINDS } from "./doctor.js";
-import { runWorker } from "./worker/genkit-worker.js";
+import { DEFAULT_OPENROUTER_MODEL, runWorker } from "./worker/genkit-worker.js";
 
 const ROOT = process.cwd();
 const argOf = (n: string) => {
@@ -144,10 +144,7 @@ async function main(): Promise<void> {
   const slug = argOf("slug")
     ?? task.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32);
   const maxAttempts = Number(argOf("attempts") ?? 3);
-  // Stealth models rotate and rate-limit; a setup run that silently produces
-  // nothing is worse than one that refuses to start. Default to a model with a
-  // paid quota, override with --model.
-  const model = argOf("model") ?? process.env.AR_MODEL ?? "gemini-3.5-flash";
+  const model = argOf("model") ?? process.env.AR_MODEL ?? DEFAULT_OPENROUTER_MODEL;
   const domainPath = join("domains", `${slug}.domain.json`);
 
   mkdirSync(join(ROOT, "domains", slug, "candidate"), { recursive: true });
@@ -166,7 +163,7 @@ async function main(): Promise<void> {
       tools: ["read", "write", "edit", "grep", "find", "ls", "bash",
               "web_search", "arxiv_search", "code_search", "fetch_content"],
       model,
-      timeoutMs: 45 * 60_000,
+      timeoutMs: 0,
     });
     console.log(`  agent finished (${run.trace.length} steps, $${run.usage.costUsd.toFixed(4)})`);
     if (run.failure) console.log(`  worker failure: ${run.failure}`);
@@ -194,7 +191,7 @@ async function main(): Promise<void> {
                     JSON.stringify(report, null, 2), "utf8");
       console.log(`\nready. start it with:`);
       console.log(`  npx tsx src/cli.ts campaign --campaign ${slug}-001 --domain ${domainPath} \\`);
-      console.log(`    --manager-model ${model} --executor-model ${model} \\`);
+      console.log(`    --architect-model ${model} --manager-model ${model} --executor-model ${model} \\`);
       console.log(`    --hours 0 --max-cost 0 --max-cycles 0 --detach`);
       return;
     }

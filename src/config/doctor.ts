@@ -3,7 +3,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { geminiApiKey } from "./env-file.js";
 import type { RuntimeConfig } from "./runtime.js";
+import { openRouterCredentialSource } from "./openrouter-auth.js";
 
 export interface DoctorCheck { name: string; ok: boolean; detail: string }
 
@@ -18,9 +20,15 @@ export function runtimeDoctor(config: RuntimeConfig, env = process.env): DoctorC
   const git = command("git", ["--version"]);
   checks.push({ name: "Git", ...git });
 
-  if (config.modelProvider === "gemini-api") {
-    checks.push({ name: "Gemini API key", ok: Boolean(env.GEMINI_API_KEY || env.GOOGLE_API_KEY),
-      detail: env.GEMINI_API_KEY || env.GOOGLE_API_KEY ? "configured" : "set GEMINI_API_KEY" });
+  if (config.modelProvider === "openrouter") {
+    const source = openRouterCredentialSource(env);
+    checks.push({ name: "OpenRouter API key", ok: source !== "missing",
+      detail: source === "environment" ? "configured in environment"
+        : source === "pi-fallback" ? "available through read-only Pi auth fallback"
+          : "set OPENROUTER_API_KEY or sign in to OpenRouter with Pi" });
+  } else if (config.modelProvider === "gemini-api") {
+    checks.push({ name: "Gemini API key", ok: Boolean(geminiApiKey(env)),
+      detail: geminiApiKey(env) ? "configured" : "set GEMINI_API_KEY (or GOOGLE_API_KEY)" });
   } else {
     const adcPath = env.GOOGLE_APPLICATION_CREDENTIALS
       ?? join(homedir(), ".config", "gcloud", "application_default_credentials.json");

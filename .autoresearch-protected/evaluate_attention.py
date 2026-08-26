@@ -73,6 +73,12 @@ MSVC_HINTS = [
 ]
 
 
+def code_without_comments(text: str) -> str:
+    """Remove C/C++ comments before applying executable-path policy checks."""
+    return re.sub(r"//[^\n\r]*|/\*.*?\*/", "", text,
+                  flags=re.MULTILINE | re.DOTALL)
+
+
 def find_ccbin() -> str | None:
     """Locate MSVC. nvcc needs a host compiler and it is not on PATH here."""
     for base in MSVC_HINTS:
@@ -121,7 +127,8 @@ def main() -> int:
         return emit(None, None, {})
 
     kernel_text = kernel.read_text(encoding="utf-8", errors="replace")
-    tensor_markers = re.findall(r"\b(?:wmma|mma\.sync|wgmma|tf32|cublas)\b", kernel_text, re.I)
+    policy_text = code_without_comments(kernel_text)
+    tensor_markers = re.findall(r"\b(?:wmma|mma\.sync|wgmma|tf32|cublas)\b", policy_text, re.I)
     check("precision_policy", "shortcut", not tensor_markers,
           "fp32-only domain; tensor/TF32 markers: " + ", ".join(sorted(set(tensor_markers)))
           if tensor_markers else "fp32-only domain; no tensor-core/TF32 path declared")

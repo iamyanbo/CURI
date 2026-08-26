@@ -70,6 +70,9 @@ export interface DomainConfig {
   };
 
   cost: { typicalSeconds: number; typicalUsd?: number; consumesScarceResource?: boolean };
+  evaluationCapabilities?: {
+    aggregate: string[]; slice: string[]; selectors: string[]; paired: string[];
+  };
 
   /** Files the executor may edit, relative to the candidate root. */
   candidateFiles: string[];
@@ -182,6 +185,13 @@ export function createGenericAdapter(projectRoot: string, cfg: DomainConfig): Do
     agentSearch: cfg.agentSearch ?? true,
     leadsAsOf: cfg.leadsAsOf,
     cost: cfg.cost,
+    evaluationCapabilities: cfg.evaluationCapabilities ?? {
+      aggregate: ["primary", "secondary"],
+      slice: ["B", "H", "T", "D", "visible", "median_ms", "p10_ms", cfg.metric.name,
+        "flops", "max_viol", "correct"],
+      selectors: ["B", "H", "T", "D", "visible"],
+      paired: [],
+    },
     candidateFiles: cfg.candidateFiles,
     protectedPaths: () => protectedAbs,
 
@@ -211,7 +221,7 @@ export function createGenericAdapter(projectRoot: string, cfg: DomainConfig): Do
       const started = Date.now();
       const [cmd, ...args] = cfg.runCommand;
       const res = spawnSync(cmd!, args, {
-        cwd: ctx.worktree, encoding: "utf8", timeout: ctx.timeoutMs,
+        cwd: ctx.worktree, encoding: "utf8", timeout: ctx.timeoutMs > 0 ? ctx.timeoutMs : undefined,
         maxBuffer: 16 * 1024 * 1024, env: baseEnv, windowsHide: true });
       const stdout = res.stdout ?? "";
       const output = join(ctx.worktree, cfg.outputPath);
@@ -275,7 +285,7 @@ export function createGenericAdapter(projectRoot: string, cfg: DomainConfig): Do
       }
 
       const res = spawnSync(cmd!, args, {
-        cwd: projectRoot, encoding: "utf8", timeout: ctx.timeoutMs,
+        cwd: projectRoot, encoding: "utf8", timeout: ctx.timeoutMs > 0 ? ctx.timeoutMs : undefined,
         maxBuffer: 16 * 1024 * 1024, env: baseEnv, windowsHide: true });
 
       if (res.status !== 0 || !existsSync(out)) {

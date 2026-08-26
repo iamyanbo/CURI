@@ -1,40 +1,56 @@
 /**
- * One-line campaign heartbeat, for periodic monitoring.
+ * One-line, evidence-bearing campaign heartbeat.
  *
- * Prints a single summary line and exits. Designed so silence is never mistaken
- * for health: if the campaign process is gone, or the log has not advanced since
- * the previous check, it says so loudly rather than printing a tidy status.
- *
- * State between checks lives in `.autoresearch/heartbeat.json`, so a stall is
- * detectable without keeping a process alive.
+ * Liveness, current activity, and scientific progress are deliberately
+ * separate. A quiet model or CUDA process is never killed or declared failed
+ * merely because a cycle has not completed. Absence-only evidence produces a
+ * review request with `safe_to_interrupt=false`.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { inspect } from "./daemon.js";
+import { inspect, processStartId } from "./daemon.js";
+import { assessHeartbeat, readHeartbeat, type HeartbeatSnapshot } from "./supervision/progress-heartbeat.js";
 import { latestCampaignId, normaliseCampaignConfig, Store } from "./store/store.js";
 
 const ROOT = process.cwd();
 const STATE_DIR = join(ROOT, ".autoresearch");
 const MARK = join(STATE_DIR, "heartbeat.json");
-// Never hardcode this. A monitor pointed at the wrong campaign reports the
-// wrong campaign's health, which is worse than no monitor at all.
 const CAMPAIGN = (() => {
   const i = process.argv.indexOf("--campaign");
   return i >= 0 ? process.argv[i + 1]! : (process.env.AR_CAMPAIGN ?? latestCampaignId());
 })();
 
-interface Mark { cycles: number; replicated: number; at: string; }
-
+interface Mark { replicated: number; at: string; }
 function readMark(): Mark | null {
   if (!existsSync(MARK)) return null;
   try { return JSON.parse(readFileSync(MARK, "utf8")) as Mark; } catch { return null; }
 }
 
+function heartbeatFiles(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const out: string[] = [];
+  const visit = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) visit(full);
+      else if (entry.isFile() && entry.name === "heartbeat.json") out.push(full);
+    }
+  };
+  visit(root);
+  return out;
+}
+
+function latestWorkerHeartbeat(campaignId: string): HeartbeatSnapshot | null {
+  return heartbeatFiles(join(STATE_DIR, "attempts"))
+    .map(readHeartbeat)
+    .filter((snapshot): snapshot is HeartbeatSnapshot => Boolean(snapshot?.campaignId === campaignId))
+    .sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt))[0] ?? null;
+}
+
 const live = inspect(STATE_DIR);
 const store = Store.open(join(STATE_DIR, "state.sqlite"));
-
 const row = store.db.prepare("SELECT status, stop_reason, config_json FROM campaigns WHERE campaign_id = ?")
   .get(CAMPAIGN) as { status: string; stop_reason: string | null; config_json: string } | undefined;
 const cycles = (store.db.prepare(
@@ -54,28 +70,39 @@ store.close();
 const prev = readMark();
 const replicated = byStatus.replicated ?? 0;
 const parts: string[] = [];
+const worker = latestWorkerHeartbeat(CAMPAIGN);
 
 if (live.state !== "running") {
   const why = live.state === "stale" ? live.reason : "no run file";
   parts.push(`⛔ CAMPAIGN NOT RUNNING (${why}) — status=${row?.status ?? "?"}${row?.stop_reason ? ` reason=${row.stop_reason}` : ""}`);
-} else if (prev && prev.cycles === cycles) {
-  // Alive but not advancing. A long cycle is normal; two flat checks is not.
-  parts.push(`⚠️ STALLED? alive (pid ${live.run.pid}) but cycle count unchanged at ${cycles} since ${prev.at}`);
+} else if (worker && !["completed", "failed"].includes(worker.phase)) {
+  const currentWorkerStart = processStartId(worker.pid);
+  const currentOperationStart = worker.operation?.pid ? processStartId(worker.operation.pid) : null;
+  const operationAlive = worker.operation?.pid
+    ? currentOperationStart !== null
+      && (!worker.operation.processStartId || currentOperationStart === worker.operation.processStartId)
+    : null;
+  const assessment = assessHeartbeat(worker, {
+    processAlive: currentWorkerStart !== null
+      && (!worker.processStartId || currentWorkerStart === worker.processStartId),
+    operationAlive,
+  });
+  const icon = assessment.state === "healthy" ? "✅" : assessment.state === "slow" ? "🐢" : "⚠️";
+  parts.push(`${icon} ${assessment.state} · ${worker.phase} · ${worker.note} · `
+    + `activity ${Math.round(assessment.activityAgeMs / 1000)}s ago · progress ${Math.round(assessment.progressAgeMs / 1000)}s ago`
+    + (assessment.state === "review_due" ? " · safe_to_interrupt=false" : ""));
 } else {
-  parts.push(`✅ running (pid ${live.run.pid}) · cycle ${cycles}`);
+  parts.push(`✅ running (pid ${live.run.pid}) · cycle ${cycles} · between model/tool operations`);
 }
 
 parts.push(
-  `claims: ${replicated} replicated` +
-  ` · ${byStatus.refuted ?? 0} refuted · ${byStatus.inconclusive ?? 0} inconclusive` +
-  ` · ${byStatus.implementation_invalid ?? 0} invalid · ${byStatus.shortcut_suspected ?? 0} shortcut`,
+  `claims: ${replicated} replicated`
+  + ` · ${byStatus.refuted ?? 0} refuted · ${byStatus.inconclusive ?? 0} inconclusive`
+  + ` · ${byStatus.implementation_invalid ?? 0} invalid · ${byStatus.shortcut_suspected ?? 0} shortcut`,
 );
 parts.push(`baseline ${typeof baseline === "number" ? baseline.toFixed(6) : "?"} · $${cost.toFixed(3)} · chain ${chainOk ? "ok" : "BROKEN"}`);
-
-if (prev && replicated > prev.replicated) {
-  parts.push(`🎉 ${replicated - prev.replicated} new replicated claim(s) since last check`);
-}
+if (prev && replicated > prev.replicated) parts.push(`🎉 ${replicated - prev.replicated} new replicated claim(s) since last check`);
 if (!chainOk) parts.push("🚨 EVENT CHAIN BROKEN — stop and investigate");
 
-writeFileSync(MARK, JSON.stringify({ cycles, replicated, at: new Date().toISOString() }), "utf8");
+writeFileSync(MARK, JSON.stringify({ replicated, at: new Date().toISOString() }), "utf8");
 console.log(`[${CAMPAIGN}] ` + parts.join(" | "));

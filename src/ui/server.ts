@@ -1,18 +1,17 @@
 /**
  * Read-only dashboard server.
  *
- * Read-only against the EVIDENCE, with exactly one narrow exception.
+ * Read-only against the EVIDENCE, with narrow, explicit operator controls.
  *
  * SQLite is opened `readonly: true`, so nothing served here can alter a result,
  * a verdict, a threshold or the event log. The trust boundary requires that an
  * observation surface must not become part of the control plane, and that still
  * holds for everything that decides what is true.
  *
- * The exception is `POST /api/steer`, which writes ONE file - the pending steer
- * - and touches no table. The campaign process reads that file at its next
- * cycle boundary, validates it, records it as a human intervention in the
- * hash-chained log, and only then shows it to the manager. So the dashboard can
- * suggest what to look at next; it cannot record, judge, or promote anything.
+ * `POST /api/steer` records either a one-cycle micro note or a durable macro
+ * steer in the hash-chained operator log. The campaign consumes it only at a
+ * safe cycle boundary. `POST /api/stop` writes the normal stop request. Neither
+ * control can alter evidence, thresholds, verdicts, or the protected evaluator.
  *
  * This is written down rather than quietly done because the header previously
  * claimed "a viewer cannot steer", and a comment that overstates a guarantee is
@@ -27,9 +26,15 @@ import { existsSync, readFileSync, watch } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { latestCampaignId, normaliseCampaignConfig } from "../store/store.js";
-import { clearSteer, pendingSteer, requestSteer } from "../steer.js";
-import { requestStop } from "../daemon.js";
+import { latestCampaignId, normaliseCampaignConfig, Store } from "../store/store.js";
+import {
+  clearSteer, pendingSteer, requestAttentionSteer, requestSteer, withdrawAttentionSteers,
+  type AttentionSteerScope,
+} from "../steer.js";
+import { clearStopRequest, detach, inspect, requestStop } from "../daemon.js";
+import { inspectWatcher } from "../watcher/control.js";
+import { assessSourceRelevance } from "../watcher/relevance.js";
+import { defaultMemoryPath } from "../memory/store.js";
 import {
   categoryForTool,
   segmentAgentTrace,
@@ -47,11 +52,52 @@ const PORT = Number(process.env.AR_UI_PORT ?? 4791);
 // No hardcoded campaign. A tool pointed at the wrong campaign reports the
 // wrong campaign's state, which is worse than reporting nothing: the
 // heartbeat once watched `tinyml-001` while `cuda-001` was the live run.
-const CAMPAIGN = process.env.AR_CAMPAIGN ?? latestCampaignId();
+const PINNED_CAMPAIGN = process.env.AR_CAMPAIGN?.trim() || null;
 const liveClients = new Set<ServerResponse>();
 
 function db(): Database.Database {
   return new Database(DB_PATH, { readonly: true, fileMustExist: true });
+}
+
+/**
+ * Follow the newest running campaign unless the operator explicitly pins one.
+ * A dashboard process commonly outlives a campaign; resolving this per request
+ * prevents a server started yesterday from showing yesterday's pipeline today.
+ */
+function campaignId(d: Database.Database): string {
+  if (PINNED_CAMPAIGN) return PINNED_CAMPAIGN;
+  const row = d.prepare(
+    `SELECT campaign_id FROM campaigns
+     ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, created_at DESC LIMIT 1`,
+  ).get() as { campaign_id: string } | undefined;
+  return row?.campaign_id ?? latestCampaignId(DB_PATH);
+}
+
+function metricInfo(d: Database.Database, selectedCampaign: string): {
+  name: string; direction: "minimize" | "maximize"; secondaryLabel: string; hasSecondary: boolean;
+} {
+  const row = d.prepare("SELECT config_json FROM campaigns WHERE campaign_id=?")
+    .get(selectedCampaign) as { config_json: string } | undefined;
+  try {
+    const cfg = normaliseCampaignConfig(row?.config_json ?? "{}");
+    const configured = String(cfg.domain ?? "");
+    const path = configured.endsWith(".json") ? join(ROOT, configured) : "";
+    if (path && existsSync(path)) {
+      const domain = JSON.parse(readFileSync(path, "utf8"));
+      return {
+        name: String(domain.metric?.name ?? "primary metric"),
+        direction: domain.metric?.direction === "maximize" ? "maximize" : "minimize",
+        secondaryLabel: domain.id === "attention" ? "hidden-shape checks" : "holdout",
+        // The CUDA attention evaluator has pass/fail correctness gates, not a
+        // second scalar. Showing the launcher's placeholder zero as a measured
+        // holdout was both confusing and factually wrong.
+        hasSecondary: domain.id !== "attention",
+      };
+    }
+  } catch { /* use generic labels */ }
+  return {
+    name: "primary metric", direction: "minimize", secondaryLabel: "holdout", hasSecondary: true,
+  };
 }
 
 function readAgentTrace(d: Database.Database, attemptId: string): TimedTraceStep[] {
@@ -93,10 +139,11 @@ function readStageLogs(d: Database.Database, attemptId: string): Array<{ kind: s
 }
 
 function readProvisionalTrace(idempotencyKey: string, kind: string): TimedTraceStep[] {
-  const match = idempotencyKey.match(/^(manager|executor):([^:]+):(\d+)$/);
-  if (!match || match[1] !== kind) return [];
+  const match = idempotencyKey.match(/^(architect|manager|executor):([^:]+):(\d+)$/);
+  if (!match || (match[1] !== kind && !(match[1] === "architect" && kind === "manager"))) return [];
   const attemptNo = Number(match[3]);
-  const dir = attemptNo === 1 ? kind : `${kind}-retry-${attemptNo}`;
+  const logicalKind = match[1]!;
+  const dir = attemptNo === 1 ? logicalKind : `${logicalKind}-retry-${attemptNo}`;
   const path = join(ROOT, ".autoresearch", "attempts", match[2]!, dir, "trace.jsonl");
   if (existsSync(path)) {
     try {
@@ -118,6 +165,7 @@ function readProvisionalTrace(idempotencyKey: string, kind: string): TimedTraceS
  * away.
  */
 function buildTree(d: Database.Database) {
+  const campaign = campaignId(d);
   // The judge's own sentence for each claim. Without it the tree shows a status
   // word and an id - "refuted / falsify / mechanism / H-6c5e8b30" - which says
   // what happened and nothing about why. The reason exists; it was not reaching
@@ -126,7 +174,7 @@ function buildTree(d: Database.Database) {
   for (const e of d.prepare(
     `SELECT aggregate_id, payload_json FROM events
      WHERE campaign_id = ? AND event_type = 'claim.judged' ORDER BY seq`,
-  ).all(CAMPAIGN) as Array<{ aggregate_id: string; payload_json: string }>) {
+  ).all(campaign) as Array<{ aggregate_id: string; payload_json: string }>) {
     try {
       const p = JSON.parse(e.payload_json);
       if (p.explanation) reasons.set(e.aggregate_id, String(p.explanation));
@@ -136,7 +184,7 @@ function buildTree(d: Database.Database) {
   const aborts = new Map<string, string>();
   for (const e of d.prepare(
     `SELECT payload_json FROM events WHERE campaign_id = ? AND event_type = 'cycle.aborted' ORDER BY seq`,
-  ).all(CAMPAIGN) as Array<{ payload_json: string }>) {
+  ).all(campaign) as Array<{ payload_json: string }>) {
     try {
       const p = JSON.parse(e.payload_json);
       if (p.reason) aborts.set(String(p.reason), String(p.reason));
@@ -146,7 +194,7 @@ function buildTree(d: Database.Database) {
   const advances = d.prepare(
     `SELECT occurred_at, payload_json FROM events
      WHERE campaign_id = ? AND event_type = 'baseline.advanced' ORDER BY seq`,
-  ).all(CAMPAIGN) as Array<{ occurred_at: string; payload_json: string }>;
+  ).all(campaign) as Array<{ occurred_at: string; payload_json: string }>;
 
   const trunk = advances.map((a, i) => {
     const p = JSON.parse(a.payload_json);
@@ -172,11 +220,15 @@ function buildTree(d: Database.Database) {
      WHERE h.campaign_id = ?
      GROUP BY h.hypothesis_id
      ORDER BY h.created_at`,
-  ).all(CAMPAIGN) as any[];
+  ).all(campaign) as any[];
 
   const nodes = hypotheses.map((h) => {
     let holdout: number | null = null;
-    try { holdout = JSON.parse(h.result_json ?? "{}")?.metrics?.holdout_bpc ?? null; } catch { /* absent */ }
+    try {
+      const raw = JSON.parse(h.result_json ?? "{}");
+      holdout = typeof raw.secondary === "number"
+        ? raw.secondary : raw.metrics?.holdout_bpc ?? null;
+    } catch { /* absent */ }
     const evidence = d.prepare(
       `SELECT kind, polarity, statement FROM evidence WHERE hypothesis_id = ? ORDER BY created_at`,
     ).all(h.hypothesis_id) as Array<{ kind: string; polarity: string; statement: string }>;
@@ -211,6 +263,8 @@ function buildTree(d: Database.Database) {
 
 /** Progress: how much better each validated advance actually made things. */
 function buildProgress(d: Database.Database) {
+  const campaign = campaignId(d);
+  const metric = metricInfo(d, campaign);
   const rows = d.prepare(
     `SELECT h.hypothesis_id, h.title, h.lane, h.updated_at,
             e.primary_value, e.baseline_value, e.result_json
@@ -219,11 +273,15 @@ function buildProgress(d: Database.Database) {
      JOIN evaluations e ON e.contract_id = ct.contract_id
      WHERE h.campaign_id = ? AND h.status = 'replicated'
      GROUP BY h.hypothesis_id ORDER BY h.updated_at`,
-  ).all(CAMPAIGN) as any[];
+  ).all(campaign) as any[];
 
   return rows.map((r, i) => {
     let holdout: number | null = null;
-    try { holdout = JSON.parse(r.result_json ?? "{}")?.metrics?.holdout_bpc ?? null; } catch { /* absent */ }
+    try {
+      const raw = JSON.parse(r.result_json ?? "{}");
+      holdout = typeof raw.secondary === "number"
+        ? raw.secondary : raw.metrics?.holdout_bpc ?? null;
+    } catch { /* absent */ }
     return {
       step: i + 1,
       id: r.hypothesis_id,
@@ -232,22 +290,94 @@ function buildProgress(d: Database.Database) {
       primary: r.primary_value,
       baseline: r.baseline_value,
       holdout,
-      gain: r.baseline_value !== null ? r.baseline_value - r.primary_value : null,
+      gain: r.baseline_value !== null
+        ? (metric.direction === "maximize"
+            ? r.primary_value - r.baseline_value : r.baseline_value - r.primary_value)
+        : null,
     };
   });
 }
 
 /** The trajectory: everything that happened, in order, as the harness recorded it. */
 function buildTrace(d: Database.Database, limit: number, offset: number) {
+  const campaign = campaignId(d);
   const rows = d.prepare(
     `SELECT seq, occurred_at, event_type, actor_kind, aggregate_kind, aggregate_id, payload_json
      FROM events WHERE campaign_id = ? ORDER BY seq DESC LIMIT ? OFFSET ?`,
-  ).all(CAMPAIGN, limit, offset) as any[];
+  ).all(campaign, limit, offset) as any[];
   return rows.map((r) => ({
     seq: r.seq, at: r.occurred_at, type: r.event_type, actor: r.actor_kind,
     subject: `${r.aggregate_kind}:${String(r.aggregate_id).slice(0, 12)}`,
     payload: JSON.parse(r.payload_json),
   }));
+}
+
+function sourceMetadata(row: { metadata_json?: string }): Record<string, any> {
+  try { return JSON.parse(row.metadata_json ?? "{}"); }
+  catch { return {}; }
+}
+
+function campaignSourceTopics(d: Database.Database, campaign: string): string[] {
+  const topics: string[] = [];
+  const subscription = d.prepare(
+    "SELECT topics_json FROM watcher_subscriptions WHERE campaign_id=?",
+  ).get(campaign) as { topics_json: string } | undefined;
+  try { topics.push(...JSON.parse(subscription?.topics_json ?? "[]")); } catch { /* none */ }
+  const plan = d.prepare(
+    `SELECT payload_json FROM events WHERE campaign_id=? AND event_type='architect.plan_registered'
+     ORDER BY seq DESC LIMIT 1`,
+  ).get(campaign) as { payload_json: string } | undefined;
+  try {
+    const strategy = JSON.parse(plan?.payload_json ?? "{}")?.plan?.program?.watch_strategy ?? {};
+    for (const key of ["core_topics", "adjacent_domains", "enabling_disciplines", "bottlenecks"]) {
+      const values = strategy[key];
+      if (Array.isArray(values)) topics.push(...values.map(String));
+    }
+  } catch { /* none */ }
+  return [...new Set(topics.map((topic) => String(topic).trim()).filter(Boolean))];
+}
+
+function sourceRowIsRelevant(
+  row: { provider?: string; title?: string; canonical_url?: string; metadata_json?: string },
+  validatedWatcherUrls: Set<string> = new Set(),
+): boolean {
+  const meta = sourceMetadata(row);
+  if (String(row.provider ?? "").startsWith("agent:") || meta.tool) return true;
+  const topic = String(meta.topic ?? "").trim();
+  const source = { title: row.title ?? "", abstract: String(meta.abstract ?? "") };
+  // Legacy watcher rows did not record the exact query that admitted them, so
+  // they cannot be audited reliably and must not be presented as evidence.
+  if (!topic || !assessSourceRelevance(topic, source).keep) return false;
+  // Provider search is only candidate generation. The public UI gets the row
+  // after the linked page was fetched and content enrichment marked it useful.
+  return validatedWatcherUrls.has(String(row.canonical_url ?? ""));
+}
+
+function validatedWatcherUrls(d: Database.Database, campaign: string): Set<string> {
+  const ids = (d.prepare(
+    `SELECT e.source_version_id
+       FROM campaign_source_enrichments e
+       JOIN campaign_memory_links l
+         ON l.campaign_id=e.campaign_id AND l.memory_kind='source'
+        AND l.memory_id=e.source_version_id
+      WHERE e.campaign_id=? AND e.status='succeeded' AND l.relevance>=0.55`,
+  ).all(campaign) as Array<{ source_version_id: string }>).map((row) => row.source_version_id);
+  if (ids.length === 0 || !existsSync(defaultMemoryPath())) return new Set();
+  let memory: Database.Database | null = null;
+  try {
+    memory = new Database(defaultMemoryPath(), { readonly: true, fileMustExist: true });
+    const get = memory.prepare(
+      "SELECT canonical_url FROM source_versions WHERE source_version_id=?",
+    );
+    return new Set(ids.flatMap((id) => {
+      const row = get.get(id) as { canonical_url: string } | undefined;
+      return row?.canonical_url ? [row.canonical_url] : [];
+    }));
+  } catch {
+    return new Set();
+  } finally {
+    memory?.close();
+  }
 }
 
 /**
@@ -260,19 +390,21 @@ function buildTrace(d: Database.Database, limit: number, offset: number) {
  * trace artifact where nobody would look.
  */
 function buildSources(d: Database.Database) {
-  const rows = d.prepare(
+  const campaign = campaignId(d);
+  const validatedUrls = validatedWatcherUrls(d, campaign);
+  const rows = (d.prepare(
     `SELECT provider, title, canonical_url, retrieved_at, source_class, reliability, metadata_json
      FROM sources WHERE campaign_id = ? ORDER BY provider, retrieved_at DESC`,
-  ).all(CAMPAIGN) as any[];
+  ).all(campaign) as any[]).filter((row) => sourceRowIsRelevant(row, validatedUrls));
 
   const groups: Record<string, any[]> = {};
   for (const r of rows) {
-    let meta: any = {};
-    try { meta = JSON.parse(r.metadata_json ?? "{}"); } catch { /* absent */ }
+    const meta = sourceMetadata(r);
     (groups[r.provider] ??= []).push({
       title: r.title, url: r.canonical_url, at: r.retrieved_at,
       sourceClass: r.source_class, reliability: r.reliability,
       tool: meta.tool ?? null, hypothesis: meta.hypothesis ?? null,
+      topic: meta.topic ?? null,
     });
   }
   return {
@@ -284,21 +416,23 @@ function buildSources(d: Database.Database) {
 }
 
 function buildSummary(d: Database.Database) {
-  const campaign = d.prepare("SELECT * FROM campaigns WHERE campaign_id = ?").get(CAMPAIGN) as any;
+  const selectedCampaign = campaignId(d);
+  const campaign = d.prepare("SELECT * FROM campaigns WHERE campaign_id = ?").get(selectedCampaign) as any;
   const statuses = d.prepare(
     "SELECT status, COUNT(*) AS n FROM hypotheses WHERE campaign_id = ? GROUP BY status",
-  ).all(CAMPAIGN) as Array<{ status: string; n: number }>;
+  ).all(selectedCampaign) as Array<{ status: string; n: number }>;
   const lanes = d.prepare(
     "SELECT lane, consumed, allocated FROM budgets WHERE campaign_id = ? AND category='runs' ORDER BY lane",
-  ).all(CAMPAIGN) as any[];
+  ).all(selectedCampaign) as any[];
   // The model actually in use, read from the last recorded attempt rather than
   // from configuration. A campaign silently ran ~30 cycles on a provider
   // default after a relaunch dropped the model flag, and nothing on screen said
   // so. What the run IS using belongs on the dashboard.
   const modelRow = d.prepare(
-    `SELECT model_spec_json FROM attempts
-     WHERE model_spec_json IS NOT NULL ORDER BY rowid DESC LIMIT 1`,
-  ).get() as { model_spec_json: string } | undefined;
+    `SELECT a.model_spec_json FROM attempts a JOIN runs r ON r.run_id=a.run_id
+     WHERE r.campaign_id=? AND a.model_spec_json IS NOT NULL
+     ORDER BY a.rowid DESC LIMIT 1`,
+  ).get(selectedCampaign) as { model_spec_json: string } | undefined;
   let model = "unknown";
   try {
     const m = JSON.parse(modelRow?.model_spec_json ?? "{}");
@@ -308,31 +442,43 @@ function buildSummary(d: Database.Database) {
   const recentInterventions = d.prepare(
     `SELECT kind, detail, changed_frontier, occurred_at FROM human_interventions
      WHERE campaign_id = ? ORDER BY occurred_at DESC LIMIT 8`,
-  ).all(CAMPAIGN) as any[];
+  ).all(selectedCampaign) as any[];
+  const validatedSourceUrls = validatedWatcherUrls(d, selectedCampaign);
 
   // A spread across providers, not just whichever one swept most recently.
   // Ordering purely by time showed eight GitHub rows and hid 38 arXiv preprints,
   // which made the scout look like a repo crawler.
-  const leads = d.prepare(
-    `SELECT provider, title, canonical_url, retrieved_at FROM (
-       SELECT provider, title, canonical_url, retrieved_at,
+  const leadCandidates = d.prepare(
+    `SELECT provider, title, canonical_url, retrieved_at, metadata_json FROM (
+       SELECT provider, title, canonical_url, retrieved_at, metadata_json,
               ROW_NUMBER() OVER (PARTITION BY provider ORDER BY retrieved_at DESC) AS rn
        FROM sources WHERE campaign_id = ? AND reliability = 'lead')
-     WHERE rn <= 4 ORDER BY rn, retrieved_at DESC`,
-  ).all(CAMPAIGN) as any[];
+     WHERE rn <= 16 ORDER BY rn, retrieved_at DESC`,
+  ).all(selectedCampaign) as any[];
+  const providerLeadCounts = new Map<string, number>();
+  const leads = leadCandidates.filter((row) => {
+    if (!sourceRowIsRelevant(row, validatedSourceUrls)) return false;
+    const count = providerLeadCounts.get(row.provider) ?? 0;
+    if (count >= 4) return false;
+    providerLeadCounts.set(row.provider, count + 1);
+    return true;
+  });
 
   // Wall time from the campaign's own first and last recorded events, so it
   // reflects the run rather than the age of the row.
   const span = d.prepare(
     `SELECT MIN(occurred_at) AS a, MAX(occurred_at) AS b FROM events WHERE campaign_id = ?`,
-  ).get(CAMPAIGN) as { a: string | null; b: string | null };
-  const elapsedMs = span?.a && span?.b
-    ? Math.max(0, Date.parse(span.b) - Date.parse(span.a)) : 0;
+  ).get(selectedCampaign) as { a: string | null; b: string | null };
+  const elapsedMs = span?.a
+    ? Math.max(0, (campaign?.status === "running" ? Date.now() : Date.parse(span.b ?? span.a)) - Date.parse(span.a))
+    : 0;
 
+  const wallEndMs = campaign?.status === "running"
+    ? Date.now() : Date.parse(span.b ?? span.a ?? new Date().toISOString());
   const rawIntervals = d.prepare(
-    `SELECT category, SUM(COALESCE(ended_ms, started_ms) - started_ms) AS ms
+    `SELECT category, SUM(MAX(0, COALESCE(ended_ms, ?) - started_ms)) AS ms
      FROM intervals WHERE campaign_id = ? AND resource_id = 'campaign' GROUP BY category`,
-  ).all(CAMPAIGN) as Array<{ category: string; ms: number }>;
+  ).all(wallEndMs, selectedCampaign) as Array<{ category: string; ms: number }>;
 
   // The campaign recorder historically wrapped a whole worker process in one
   // `model_reasoning` interval. Subtract paired tool spans from that bucket so
@@ -343,17 +489,23 @@ function buildSummary(d: Database.Database) {
     rawIntervals.map((row) => [row.category, Number(row.ms ?? 0)]),
   );
   const agentAttempts = d.prepare(
-    `SELECT a.attempt_id, a.started_at, a.completed_at
+    `SELECT a.attempt_id, a.started_at, a.completed_at, a.state, a.failure_code
      FROM attempts a JOIN runs r ON r.run_id = a.run_id
      WHERE r.campaign_id = ? AND r.kind IN ('manager','executor')
        AND a.started_at IS NOT NULL AND a.completed_at IS NOT NULL`,
-  ).all(CAMPAIGN) as Array<{ attempt_id: string; started_at: string; completed_at: string }>;
+  ).all(selectedCampaign) as Array<{
+    attempt_id: string; started_at: string; completed_at: string;
+    state: string; failure_code: string | null;
+  }>;
   let tracedModelMs = 0;
+  let failedModelMs = 0;
   let tracedToolMs = 0;
   for (const attempt of agentAttempts) {
     const duration = Math.max(0, Date.parse(attempt.completed_at) - Date.parse(attempt.started_at));
     const totals = sumSegments(segmentAgentTrace(readAgentTrace(d, attempt.attempt_id), duration));
-    tracedModelMs += totals.model_reasoning ?? 0;
+    const modelMs = totals.model_reasoning ?? 0;
+    if (attempt.state === "failed" || attempt.failure_code) failedModelMs += modelMs;
+    else tracedModelMs += modelMs;
     for (const category of ["tool_execution", "command_execution"] as const) {
       const ms = totals[category] ?? 0;
       intervalTotals[category] = (intervalTotals[category] ?? 0) + ms;
@@ -362,32 +514,131 @@ function buildSummary(d: Database.Database) {
   }
   const oldModelBracket = intervalTotals.model_reasoning ?? 0;
   intervalTotals.model_reasoning = tracedModelMs;
+  intervalTotals.error = (intervalTotals.error ?? 0) + failedModelMs;
   // Prompt assembly, response validation and retry setup happened inside the
   // old coarse bracket but outside the worker attempts. They belong to the
   // harness/supervisor, not to the model.
-  const harnessOverhead = Math.max(0, oldModelBracket - tracedModelMs - tracedToolMs);
+  const harnessOverhead = Math.max(0, oldModelBracket - tracedModelMs - failedModelMs - tracedToolMs);
   intervalTotals.supervisor = (intervalTotals.supervisor ?? 0) + harnessOverhead;
-  const intervals = Object.entries(intervalTotals).map(([category, ms]) => ({ category, ms }));
+
+  // Failed deterministic attempts are also wall time. Reclassify their
+  // compute/evaluation duration as error rather than hiding failures inside a
+  // successful-looking bucket. This moves time; it never adds it twice.
+  const failedDeterministic = d.prepare(
+    `SELECT r.kind, SUM(MAX(0, CAST((julianday(a.completed_at)-julianday(a.started_at))*86400000 AS INTEGER))) AS ms
+     FROM attempts a JOIN runs r ON r.run_id=a.run_id
+     WHERE r.campaign_id=? AND a.completed_at IS NOT NULL
+       AND (a.state='failed' OR a.failure_code IS NOT NULL)
+       AND r.kind IN ('compute','evaluation','replay') GROUP BY r.kind`,
+  ).all(selectedCampaign) as Array<{ kind: string; ms: number }>;
+  for (const failed of failedDeterministic) {
+    const category = failed.kind === "evaluation" ? "evaluation" : "compute";
+    const moved = Math.min(Number(intervalTotals[category] ?? 0), Number(failed.ms ?? 0));
+    intervalTotals[category] = Math.max(0, Number(intervalTotals[category] ?? 0) - moved);
+    intervalTotals.error = Number(intervalTotals.error ?? 0) + moved;
+  }
+
+  // Everything since campaign start must appear somewhere. Gaps include
+  // between-cycle idle time, provider cooldowns, startup, and older code paths
+  // that did not open an interval. They are visible as idle/unattributed—not
+  // silently dropped or mislabelled as model reasoning.
+  const attributedMs = Object.values(intervalTotals).reduce((sum, value) => sum + Number(value || 0), 0);
+  intervalTotals.idle = Math.max(0, elapsedMs - attributedMs);
+  const intervals = Object.entries(intervalTotals)
+    .filter(([, ms]) => Number(ms) > 0)
+    .map(([category, ms]) => ({ category, ms }));
   const cost = d.prepare(
     "SELECT COALESCE(SUM(consumed),0) AS c FROM budgets WHERE campaign_id=? AND category='model_cost_usd'",
-  ).get(CAMPAIGN) as { c: number };
+  ).get(selectedCampaign) as { c: number };
   const interventions = d.prepare(
     "SELECT COUNT(*) AS n, COALESCE(SUM(changed_frontier),0) AS f FROM human_interventions WHERE campaign_id = ?",
-  ).get(CAMPAIGN) as { n: number; f: number };
+  ).get(selectedCampaign) as { n: number; f: number };
   const cheats = d.prepare(
     "SELECT COUNT(*) AS n FROM evidence WHERE campaign_id = ? AND kind = 'shortcut'",
-  ).get(CAMPAIGN) as { n: number };
+  ).get(selectedCampaign) as { n: number };
   const events = d.prepare("SELECT COUNT(*) AS n FROM events WHERE campaign_id = ?")
-    .get(CAMPAIGN) as { n: number };
+    .get(selectedCampaign) as { n: number };
 
   let cfg: any = {};
   // Through the normaliser: campaigns written before the rename still hold
   // `baselineBpc`, and the dashboard showed "None" for a live 317 GB/s baseline.
   try { cfg = normaliseCampaignConfig(campaign?.config_json ?? "{}"); } catch { /* absent */ }
+  const metric = metricInfo(d, selectedCampaign);
+  const startingBaseline = Number(cfg.calibration?.mean);
+
+  // Strategic state is part of the pipeline, so surface it alongside the
+  // experiment ledger instead of leaving the macro architect, watcher and
+  // memory visible only as unlabeled graph nodes.
+  const planRow = d.prepare(
+    `SELECT occurred_at, payload_json FROM events
+     WHERE campaign_id=? AND event_type='architect.plan_registered'
+     ORDER BY seq DESC LIMIT 1`,
+  ).get(selectedCampaign) as { occurred_at: string; payload_json: string } | undefined;
+  let program: Record<string, unknown> | null = null;
+  let programTrigger: string | null = null;
+  try {
+    const payload = JSON.parse(planRow?.payload_json ?? "{}");
+    program = payload.plan?.program ?? null;
+    programTrigger = payload.trigger ?? null;
+  } catch { /* an absent/unreadable plan is reported as pending */ }
+  const ideaRows = d.prepare(
+    "SELECT state, COUNT(*) AS n FROM idea_cards WHERE campaign_id=? GROUP BY state",
+  ).all(selectedCampaign) as Array<{ state: string; n: number }>;
+  const subscription = d.prepare(
+    `SELECT enabled, interval_seconds, topics_json, query_strategy_json, next_sweep_at
+     FROM watcher_subscriptions WHERE campaign_id=?`,
+  ).get(selectedCampaign) as {
+    enabled: number; interval_seconds: number; topics_json: string;
+    query_strategy_json: string; next_sweep_at: string | null;
+  } | undefined;
+  let watcherTopics: string[] = [];
+  let watcherStrategy: Record<string, unknown> = {};
+  try { watcherTopics = JSON.parse(subscription?.topics_json ?? "[]"); } catch { /* empty */ }
+  try { watcherStrategy = JSON.parse(subscription?.query_strategy_json ?? "{}"); } catch { /* empty */ }
+  const retrievals = d.prepare(
+    "SELECT COUNT(*) AS n FROM memory_retrievals WHERE campaign_id=?",
+  ).get(selectedCampaign) as { n: number };
+  const pendingMacroSteers = d.prepare(
+    `SELECT steer_id, scope, text, created_at FROM attention_steers
+     WHERE campaign_id=? AND consumed_at IS NULL AND scope IN ('macro','all')
+     ORDER BY created_at`,
+  ).all(selectedCampaign) as Array<{
+    steer_id: string; scope: string; text: string; created_at: string;
+  }>;
+  const currentHypothesis = d.prepare(
+    `SELECT hypothesis_id, title, mechanism, motivation, falsifier, lane, status,
+            step_index, steps_allowed, created_at
+     FROM hypotheses WHERE campaign_id=? ORDER BY created_at DESC LIMIT 1`,
+  ).get(selectedCampaign) as Record<string, unknown> | undefined;
+  let domainConfig: Record<string, any> = {};
+  try {
+    const configured = String(cfg.domain ?? "");
+    const path = configured.endsWith(".json") ? join(ROOT, configured) : "";
+    if (path && existsSync(path)) domainConfig = JSON.parse(readFileSync(path, "utf8"));
+  } catch { /* keep the README useful with campaign fields alone */ }
+  const objective = String(campaign?.objective ?? "").trim().replace(/[.\s]+$/, "");
+  const programTitle = String(program?.title ?? "").trim();
+  const liveBaseline = Number(cfg.baselinePrimary);
+  const progressSentence = Number.isFinite(startingBaseline) && Number.isFinite(liveBaseline)
+    && startingBaseline !== liveBaseline
+    ? `Independently replicated changes have moved ${metric.name} from ${startingBaseline.toFixed(3)} to ${liveBaseline.toFixed(3)}.`
+    : "No independently replicated baseline improvement has been recorded yet.";
+  const researchAbstract = [
+    objective ? `This campaign is trying to ${objective.charAt(0).toLowerCase()}${objective.slice(1)}.` : "",
+    progressSentence,
+    programTitle
+      ? `The current plan is “${programTitle}.” It turns that direction into one focused, falsifiable implementation at a time.`
+      : "The macro architect has not registered a plan yet.",
+    "A change only becomes the new baseline after protected evaluation and independent replication.",
+  ].filter(Boolean).join(" ");
 
   return {
-    campaign: campaign?.campaign_id ?? CAMPAIGN,
+    campaign: campaign?.campaign_id ?? selectedCampaign,
     status: campaign?.status ?? "unknown",
+    // Recorded status and a live process are different questions: a campaign
+    // killed mid-cycle still reads 'running' in the database. The stop/resume
+    // control has to follow the process, not the record.
+    live: inspect(STATE_DIR).state,
     model,
     elapsedMs,
     pendingSteer: pendingSteer(STATE_DIR),
@@ -396,23 +647,70 @@ function buildSummary(d: Database.Database) {
     stopReason: campaign?.stop_reason ?? null,
     baseRevision: campaign?.base_revision ?? null,
     baselinePrimary: cfg.baselinePrimary ?? null,
-    baselineSecondary: cfg.baselineSecondary ?? null,
+    baselineSecondary: metric.hasSecondary ? cfg.baselineSecondary ?? null : null,
+    startingBaseline: Number.isFinite(startingBaseline) ? startingBaseline : cfg.baselinePrimary ?? null,
+    metric,
     statuses: Object.fromEntries(statuses.map((s) => [s.status, s.n])),
     lanes, intervals,
     intervalAccounting: {
       method: "trace-exclusive",
-      note: "Reasoning is worker wall-time minus paired tools; orchestration outside worker attempts is supervisor time.",
+      wallMs: elapsedMs,
+      accountedMs: attributedMs + intervalTotals.idle,
+      note: "Reasoning excludes paired tools. Failed worker remainder is error. Gaps, cooldowns, and between-cycle time are idle/unattributed, so the categories cover campaign wall time.",
     },
     costUsd: cost.c,
     interventions: interventions.n,
     interventionsChangedFrontier: interventions.f,
     cheatEvidence: cheats.n,
     events: events.n,
+    research: {
+      program,
+      programRegisteredAt: planRow?.occurred_at ?? null,
+      programTrigger,
+      ideas: Object.fromEntries(ideaRows.map((row) => [row.state, row.n])),
+      memoryRetrievals: retrievals.n,
+      watcher: subscription ? {
+        enabled: Boolean(subscription.enabled), intervalSeconds: subscription.interval_seconds,
+        topics: watcherTopics, strategy: watcherStrategy, nextSweepAt: subscription.next_sweep_at,
+      } : null,
+    },
+    readme: {
+      title: campaign?.title ?? selectedCampaign,
+      objective: campaign?.objective ?? "",
+      abstract: researchAbstract,
+      domain: String(domainConfig.id ?? cfg.domain ?? "unknown"),
+      metric,
+      candidateFiles: domainConfig.candidateFiles ?? [],
+      protectedPaths: domainConfig.protectedPaths ?? [],
+      precisionPolicy: domainConfig._precisionPolicy ?? null,
+      currentHypothesis: currentHypothesis ?? null,
+      pendingMacroSteers,
+    },
   };
 }
 
+function describeOrchestratorEvent(type: string, payload: Record<string, any>): string {
+  switch (type) {
+    case "cycle.started":
+      return `Opened the cycle from baseline ${String(payload.baseRevision ?? "unknown").slice(0, 10)} and sealed the protected-tree hash.`;
+    case "contract.registered":
+      return `Registered the experiment thresholds before execution${payload.thresholds
+        ? `: support ${payload.thresholds.support}, refute ${payload.thresholds.refute}` : ""}.`;
+    case "candidate.classified":
+      return `Classified the implementation as ${payload.actual ?? "unknown"}; changed ${(payload.changedPaths ?? []).join(", ") || "no files"}; protected paths ${payload.touchedProtected ? "were touched" : "remained untouched"}.`;
+    case "claim.judged":
+      return `${String(payload.status ?? "judged").replace(/_/g, " ")}: ${payload.explanation ?? "the registered contract was applied"}.`;
+    case "baseline.advanced":
+      return `Advanced the validated baseline from ${String(payload.from ?? "").slice(0, 10)} to ${String(payload.to ?? "").slice(0, 10)}.`;
+    case "cycle.aborted":
+      return `Aborted the cycle without a research verdict: ${payload.reason ?? "unspecified failure"}.`;
+    default:
+      return `${type.replace(/[._]/g, " ")}: ${JSON.stringify(payload).slice(0, 700)}`;
+  }
+}
+
 /**
- * The pipeline flow for one cycle: manager -> executor -> compute -> evaluator
+ * The pipeline flow for one cycle: architect -> micro-manager -> executor -> compute -> evaluator
  * -> judge, with each stage's duration and outcome, plus the agent trajectory
  * behind the two stages that call a model.
  *
@@ -420,15 +718,17 @@ function buildSummary(d: Database.Database) {
  * what it concluded.
  */
 function buildCycle(d: Database.Database, hypothesisId: string) {
+  const campaign = campaignId(d);
   const cyclePrefix = hypothesisId.startsWith("H-") ? hypothesisId.slice(2) : hypothesisId;
   const runs = d.prepare(
     `SELECT r.run_id, r.kind, r.state, r.idempotency_key, a.attempt_id,
             a.started_at, a.completed_at, a.failure_code, a.model_spec_json
      FROM runs r JOIN attempts a ON a.run_id = r.run_id
      WHERE r.hypothesis_id = ?
-        OR (r.campaign_id = ? AND r.kind = 'manager' AND r.idempotency_key LIKE ?)
+        OR (r.campaign_id = ? AND r.kind = 'manager'
+            AND (r.idempotency_key LIKE ? OR r.idempotency_key LIKE ?))
      ORDER BY a.started_at`,
-  ).all(hypothesisId, CAMPAIGN, `manager:${cyclePrefix}%`) as any[];
+  ).all(hypothesisId, campaign, `manager:${cyclePrefix}%`, `architect:${cyclePrefix}%`) as any[];
 
   const now = Date.now();
 
@@ -455,7 +755,8 @@ function buildCycle(d: Database.Database, hypothesisId: string) {
     // agent trace to save - and meanwhile their REAL output (the evaluator's
     // checks, the experiment artifact) sat sealed and unshown. Say which kind
     // of stage this is, and show what it actually produced.
-    const isAgent = r.kind === "manager" || r.kind === "executor";
+    const logicalKind = String(r.idempotency_key).startsWith("architect:") ? "architect" : r.kind;
+    const isAgent = logicalKind === "architect" || logicalKind === "manager" || logicalKind === "executor";
     const traceState = sealedTrace.length > 0
       ? "sealed"
       : !r.completed_at
@@ -488,7 +789,7 @@ function buildCycle(d: Database.Database, hypothesisId: string) {
     }
 
     return {
-      runId: r.run_id, attemptId: r.attempt_id, kind: r.kind, state: r.state,
+      runId: r.run_id, attemptId: r.attempt_id, kind: logicalKind, state: r.state,
       failureCode: r.failure_code, model, tokens,
       durationMs: started ? (ended ?? now) - started : null,
       startedAt: r.started_at,
@@ -498,19 +799,36 @@ function buildCycle(d: Database.Database, hypothesisId: string) {
     };
   });
 
+  const cycleStartRow = d.prepare(
+    `SELECT occurred_at FROM events WHERE campaign_id=? AND event_type='cycle.started'
+       AND aggregate_id LIKE ? ORDER BY seq DESC LIMIT 1`,
+  ).get(campaign, `${cyclePrefix}%`) as { occurred_at: string } | undefined;
   const validTimes = stages
     .map((stage) => stage.startedAt ? Date.parse(stage.startedAt) : null)
     .filter((value): value is number => value !== null && Number.isFinite(value));
-  const timelineStart = validTimes.length ? Math.min(...validTimes) : now;
+  const recordedCycleStart = cycleStartRow ? Date.parse(cycleStartRow.occurred_at) : null;
+  const timelineStart = Math.min(
+    ...(validTimes.length ? validTimes : [now]),
+    ...(recordedCycleStart !== null && Number.isFinite(recordedCycleStart) ? [recordedCycleStart] : []),
+  );
   const timelineSegments: Array<TraceSegment & { stage: string; attemptId?: string }> = [];
 
   for (const stage of stages) {
     if (!stage.startedAt || stage.durationMs === null) continue;
     const offset = Date.parse(stage.startedAt) - timelineStart;
-    if (stage.kind === "manager" || stage.kind === "executor") {
+    if (stage.kind === "architect" || stage.kind === "manager" || stage.kind === "executor") {
       for (const segment of segmentAgentTrace(stage.trace, stage.durationMs)) {
+        const failed = stage.state === "failed" || Boolean(stage.failureCode);
         timelineSegments.push({
           ...segment,
+          category: failed && segment.category === "model_reasoning" ? "error" : segment.category,
+          label: failed && segment.category === "model_reasoning"
+            ? `${stage.kind} failed / retry work` : segment.label,
+          // A later failure does not retroactively make successful reads and
+          // writes errors. Only the failed model remainder is reclassified;
+          // individual tool spans retain their own result status while staying
+          // grouped on the parent attempt lane in the dashboard.
+          isError: segment.category === "model_reasoning" ? failed : Boolean(segment.isError),
           startMs: offset + segment.startMs,
           endMs: offset + segment.endMs,
           stage: stage.kind,
@@ -518,7 +836,10 @@ function buildCycle(d: Database.Database, hypothesisId: string) {
         });
       }
     } else {
-      const category: UiTimeCategory = stage.kind === "evaluation"
+      const failed = stage.state === "failed" || Boolean(stage.failureCode);
+      const category: UiTimeCategory = failed
+        ? "error"
+        : stage.kind === "evaluation"
         ? "evaluation"
         : stage.kind === "compute" || stage.kind === "replay"
           ? "compute"
@@ -527,7 +848,7 @@ function buildCycle(d: Database.Database, hypothesisId: string) {
         category,
         startMs: offset,
         endMs: offset + stage.durationMs,
-        label: stage.kind === "compute" ? "Experiment" : stage.kind,
+        label: failed ? `${stage.kind} failed` : stage.kind === "compute" ? "Experiment" : stage.kind,
         stage: stage.kind,
         attemptId: stage.attemptId,
       });
@@ -566,6 +887,36 @@ function buildCycle(d: Database.Database, hypothesisId: string) {
   const timelineEnd = Math.max(cursor, artifactEnd, ...timelineSegments.map((segment) => segment.endMs), 0);
   timelineSegments.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
 
+  // The orchestrator is deterministic, so it has no hidden model trace. Its
+  // real trajectory is the ordered set of control decisions it records in the
+  // event ledger. Surface those decisions as their own stage instead of
+  // pretending the gaps between model calls are an opaque agent.
+  const orchestratorEvents = d.prepare(
+    `SELECT seq, occurred_at, event_type, payload_json FROM events
+     WHERE campaign_id=? AND actor_kind='supervisor' AND occurred_at>=? AND occurred_at<=?
+     ORDER BY seq`,
+  ).all(
+    campaign,
+    new Date(timelineStart).toISOString(),
+    new Date(timelineStart + timelineEnd).toISOString(),
+  ) as Array<{ seq: number; occurred_at: string; event_type: string; payload_json: string }>;
+  const cycleComplete = stages.length > 0 && stages.every((stage) => Boolean(stage.completedAt));
+  const orchestrator = {
+    runId: `orchestrator:${cyclePrefix}`, attemptId: null, kind: "orchestrator",
+    state: cycleComplete ? "complete" : "active", failureCode: null, model: null, tokens: 0,
+    durationMs: timelineEnd, startedAt: new Date(timelineStart).toISOString(),
+    completedAt: cycleComplete ? new Date(timelineStart + timelineEnd).toISOString() : null,
+    isAgent: false, artifacts: [], checks: [], measured: null, traceState: "event ledger", logs: [],
+    trace: orchestratorEvents.map((entry) => {
+      let payload: Record<string, any> = {};
+      try { payload = JSON.parse(entry.payload_json); } catch { /* retain empty payload */ }
+      return {
+        seq: entry.seq, atMs: Math.max(0, Date.parse(entry.occurred_at) - timelineStart),
+        kind: "text" as const, content: describeOrchestratorEvent(entry.event_type, payload),
+      };
+    }),
+  };
+
   const hypothesis = d.prepare(
     `SELECT hypothesis_id, lane, title, mechanism, motivation, falsifier, status,
             change_class, belief_derived, steps_allowed
@@ -587,17 +938,19 @@ function buildCycle(d: Database.Database, hypothesisId: string) {
     contract,
     stages,
     evidence,
+    orchestrator,
     timeline: {
       startedAt: new Date(timelineStart).toISOString(),
       durationMs: timelineEnd,
       segments: timelineSegments,
-      accounting: "Tool and command spans are paired from trace events; model reasoning is the exclusive remainder.",
+      accounting: "Every attempt is one lane: paired tool/command calls stay positioned and labelled within it, failed remainder is error, and uncovered in-cycle gaps are orchestrator time.",
     },
   };
 }
 
 /** Lightweight current-state projection for the draggable pipeline graph. */
 function buildLivePipeline(d: Database.Database) {
+  const campaign = campaignId(d);
   const now = Date.now();
   const active = d.prepare(
     `SELECT r.run_id, r.kind, r.state, r.hypothesis_id, r.idempotency_key,
@@ -605,17 +958,17 @@ function buildLivePipeline(d: Database.Database) {
      FROM runs r JOIN attempts a ON a.run_id = r.run_id
      WHERE r.campaign_id = ? AND a.completed_at IS NULL
      ORDER BY a.started_at DESC LIMIT 1`,
-  ).get(CAMPAIGN) as any;
+  ).get(campaign) as any;
 
   const latest = active ?? d.prepare(
     `SELECT r.run_id, r.kind, r.state, r.hypothesis_id, r.idempotency_key,
             a.attempt_id, a.state AS attempt_state, a.started_at, a.completed_at
      FROM runs r JOIN attempts a ON a.run_id = r.run_id
      WHERE r.campaign_id = ? ORDER BY a.started_at DESC LIMIT 1`,
-  ).get(CAMPAIGN) as any;
+  ).get(campaign) as any;
 
   const cycleMatch = String(latest?.idempotency_key ?? "")
-    .match(/^(?:manager|executor|compute|evaluation|replay):([^:]+)/);
+    .match(/^(?:architect|manager|executor|compute|evaluation|replay):([^:]+)/);
   const cycleId = cycleMatch?.[1] ?? null;
   const rows = cycleId ? d.prepare(
     `SELECT r.kind, r.state, r.hypothesis_id, r.idempotency_key,
@@ -624,22 +977,27 @@ function buildLivePipeline(d: Database.Database) {
      FROM runs r JOIN attempts a ON a.run_id = r.run_id
      WHERE r.campaign_id = ? AND r.idempotency_key LIKE ?
      ORDER BY a.started_at`,
-  ).all(CAMPAIGN, `%:${cycleId}%`) as any[] : [];
+  ).all(campaign, `%:${cycleId}%`) as any[] : [];
 
   const modules: Record<string, { state: string; durationMs: number; count: number; meta?: string }> = {};
   const traces = new Map<string, TimedTraceStep[]>();
   for (const row of rows) {
-    const moduleId = row.kind === "evaluation" ? "evaluator" : row.kind;
+    const moduleId = String(row.idempotency_key).startsWith("architect:")
+      ? "architect" : row.kind === "evaluation" ? "evaluator" : row.kind;
     const start = row.started_at ? Date.parse(row.started_at) : now;
     const end = row.completed_at ? Date.parse(row.completed_at) : now;
     const durationMs = Math.max(0, end - start);
-    const failed = row.state === "failed" || row.attempt_state === "failed" || Boolean(row.failure_code);
-    const state = row.completed_at ? (failed ? "failed" : "complete") : "active";
+    const waitingExternal = String(row.failure_code ?? "").includes("PROVIDER_RATE_LIMITED");
+    const failed = !waitingExternal
+      && (row.state === "failed" || row.attempt_state === "failed" || Boolean(row.failure_code));
+    const state = row.completed_at
+      ? (waitingExternal ? "waiting" : failed ? "failed" : "complete") : "active";
     const previous = modules[moduleId] ?? { state: "idle", durationMs: 0, count: 0 };
     modules[moduleId] = {
       state: state === "active" || previous.state === "active" ? "active" : state,
       durationMs: previous.durationMs + durationMs,
       count: previous.count + 1,
+      meta: waitingExternal ? "provider quota; orchestrator will resume" : previous.meta,
     };
 
     if (row.kind === "manager" || row.kind === "executor") {
@@ -660,8 +1018,10 @@ function buildLivePipeline(d: Database.Database) {
     }
   }
 
-  let currentModule = active?.kind === "evaluation" ? "evaluator" : active?.kind ?? null;
-  let currentLabel = active ? String(active.kind) : "idle";
+  const activeLogicalKind = String(active?.idempotency_key ?? "").startsWith("architect:")
+    ? "architect" : active?.kind;
+  let currentModule = activeLogicalKind === "evaluation" ? "evaluator" : activeLogicalKind ?? null;
+  let currentLabel = active ? String(activeLogicalKind) : "idle";
   if (active && (active.kind === "manager" || active.kind === "executor")) {
     const trace = traces.get(active.attempt_id) ?? [];
     const openCalls = new Map<string, TimedTraceStep>();
@@ -673,7 +1033,7 @@ function buildLivePipeline(d: Database.Database) {
     const inFlight = [...openCalls.values()].at(-1);
     if (inFlight) {
       currentModule = categoryForTool(inFlight.toolName) === "command_execution" ? "shell" : "tools";
-      currentLabel = `${active.kind} · ${inFlight.toolName ?? "tool"}`;
+      currentLabel = `${activeLogicalKind} · ${inFlight.toolName ?? "tool"}`;
       const currentStats = modules[currentModule] ?? { state: "idle", durationMs: 0, count: 0 };
       modules[currentModule] = { ...currentStats, state: "active" };
     }
@@ -684,20 +1044,115 @@ function buildLivePipeline(d: Database.Database) {
       `SELECT category, started_ms FROM intervals
        WHERE campaign_id = ? AND resource_id = 'campaign' AND ended_ms IS NULL
        ORDER BY started_ms DESC LIMIT 1`,
-    ).get(CAMPAIGN) as { category: string; started_ms: number } | undefined;
+    ).get(campaign) as { category: string; started_ms: number } | undefined;
     if (interval) {
       const categoryModule: Record<string, string> = {
-        compute: "compute", evaluation: "evaluator", supervisor: "supervisor",
+        compute: "compute", evaluation: "evaluator", supervisor: "orchestrator",
+        blocked: "orchestrator", sleep: "orchestrator", queue: "orchestrator",
         tool_execution: "tools", command_execution: "shell",
       };
-      currentModule = categoryModule[interval.category] ?? "supervisor";
+      currentModule = categoryModule[interval.category] ?? "orchestrator";
       currentLabel = interval.category.replace(/_/g, " ");
       const stats = modules[currentModule] ?? { state: "idle", durationMs: 0, count: 0 };
       modules[currentModule] = { ...stats, state: "active", durationMs: now - interval.started_ms };
     }
   }
 
-  const order = ["supervisor", "manager", "executor", "tools", "shell", "compute", "evaluation", "judge", "replay"];
+  // The orchestrator is the control plane around every stage, not a peer that
+  // disappeared when watcher/memory were added. Provider cooldowns are also an
+  // orchestrator state: no model attempt is active, but the campaign is alive
+  // and intentionally waiting rather than blank or hung.
+  const campaignRow = d.prepare("SELECT status, created_at FROM campaigns WHERE campaign_id=?")
+    .get(campaign) as { status: string; created_at: string } | undefined;
+  let orchestratorMeta = campaignRow?.status ?? "campaign unavailable";
+  const providerHeartbeat = join(STATE_DIR, "attempts", "provider-wait", campaign, "heartbeat.json");
+  if (existsSync(providerHeartbeat)) {
+    try {
+      const heartbeat = JSON.parse(readFileSync(providerHeartbeat, "utf8"));
+      if (heartbeat.phase === "waiting_external") {
+        orchestratorMeta = String(heartbeat.note ?? "waiting for provider");
+        currentModule = "orchestrator";
+        currentLabel = orchestratorMeta;
+      }
+    } catch { /* ignore a heartbeat while it is being replaced */ }
+  }
+  const hypothesisCount = Number((d.prepare(
+    "SELECT COUNT(*) AS n FROM hypotheses WHERE campaign_id=?",
+  ).get(campaign) as { n: number }).n);
+  modules.orchestrator = {
+    state: campaignRow?.status === "running" ? "active" : "idle",
+    durationMs: campaignRow ? Math.max(0, now - Date.parse(campaignRow.created_at)) : 0,
+    count: hypothesisCount,
+    meta: orchestratorMeta,
+  };
+
+  const planCount = Number((d.prepare(
+    "SELECT COUNT(*) AS n FROM events WHERE campaign_id=? AND event_type='architect.plan_registered'",
+  ).get(campaign) as { n: number }).n);
+  if (!modules.architect && planCount > 0) {
+    modules.architect = {
+      state: "complete", durationMs: 1, count: planCount,
+      meta: `${planCount} program revision(s)`,
+    };
+  }
+
+  const latestHypothesis = latest?.hypothesis_id ?? null;
+  if (latestHypothesis) {
+    const contractCount = Number((d.prepare("SELECT COUNT(*) AS n FROM contracts WHERE hypothesis_id=?")
+      .get(latestHypothesis) as { n: number }).n);
+    const diffCount = Number((d.prepare(
+      `SELECT COUNT(*) AS n FROM artifacts a JOIN attempts at ON at.attempt_id=a.attempt_id
+       JOIN runs r ON r.run_id=at.run_id WHERE r.hypothesis_id=? AND a.kind='candidate-diff'`,
+    ).get(latestHypothesis) as { n: number }).n);
+    const judgementCount = Number((d.prepare(
+      "SELECT COUNT(*) AS n FROM events WHERE campaign_id=? AND aggregate_id=? AND event_type='claim.judged'",
+    ).get(campaign, latestHypothesis) as { n: number }).n);
+    const evidenceCount = Number((d.prepare("SELECT COUNT(*) AS n FROM evidence WHERE hypothesis_id=?")
+      .get(latestHypothesis) as { n: number }).n);
+    if (contractCount) modules.contract = { state: "complete", durationMs: 1, count: contractCount };
+    if (diffCount) modules.classify = { state: "complete", durationMs: 1, count: diffCount };
+    if (judgementCount) modules.judge = { state: "complete", durationMs: 1, count: judgementCount };
+    if (evidenceCount) modules.seal = { state: "complete", durationMs: 1, count: evidenceCount };
+  }
+
+  const order = [
+    "orchestrator", "architect", "manager", "executor", "tools", "shell",
+    "compute", "evaluator", "judge", "replay", "seal",
+  ];
+  const watcher = inspectWatcher(STATE_DIR, campaign);
+  const watcherCursor = (() => {
+    try {
+      return d.prepare(
+        `SELECT COUNT(*) AS providers, MAX(last_success_at) AS last_success,
+                SUM(CASE WHEN last_error IS NOT NULL THEN 1 ELSE 0 END) AS failures
+         FROM watcher_cursors WHERE campaign_id=?`,
+      ).get(campaign) as { providers: number; last_success: string | null; failures: number };
+    } catch { return { providers: 0, last_success: null, failures: 0 }; }
+  })();
+  modules.watcher = {
+    state: watcher.state === "running" ? "active" : watcher.state === "stale" ? "failed" : "idle",
+    durationMs: watcher.state === "running" ? Math.max(0, now - Date.parse(watcher.run.startedAt)) : 0,
+    count: watcherCursor.providers,
+    meta: watcher.state === "running"
+      ? `${watcherCursor.providers} query cursors · ${watcherCursor.failures ?? 0} failing`
+      : watcher.state === "stale" ? watcher.reason : "not enabled",
+  };
+  let memoryMeta = "global memory unavailable";
+  let memoryCount = 0;
+  const memoryPath = defaultMemoryPath();
+  if (existsSync(memoryPath)) {
+    try {
+      const md = new Database(memoryPath, { readonly: true, fileMustExist: true });
+      const stats = md.prepare(
+        `SELECT (SELECT COUNT(*) FROM source_versions) AS sources,
+                (SELECT COUNT(*) FROM mechanisms) AS mechanisms`,
+      ).get() as { sources: number; mechanisms: number };
+      md.close();
+      memoryCount = stats.sources + stats.mechanisms;
+      memoryMeta = `${stats.sources} sources · ${stats.mechanisms} mechanisms`;
+    } catch { /* retain unavailable label */ }
+  }
+  modules.memory = { state: memoryCount > 0 ? "done" : "idle", durationMs: 0, count: memoryCount, meta: memoryMeta };
   const currentIndex = currentModule ? order.indexOf(currentModule) : -1;
   return {
     at: new Date(now).toISOString(),
@@ -767,7 +1222,9 @@ setInterval(() => {
 createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${PORT}`);
 
-  // One write path, and it writes a file rather than the database.
+  // Explicit attention control. Macro guidance is durable and audited in the
+  // event chain; the legacy micro scope remains a one-cycle file consumed by
+  // the manager. Neither path can alter evidence or judgement.
   if (req.method === "POST" && url.pathname === "/api/steer") {
     let body = "";
     req.on("data", (c) => {
@@ -777,15 +1234,32 @@ createServer((req, res) => {
     });
     req.on("end", () => {
       try {
-        const text = String(JSON.parse(body).text ?? "").trim();
+        const parsed = JSON.parse(body);
+        const text = String(parsed.text ?? "").trim();
+        const scope = String(parsed.scope ?? "macro") as AttentionSteerScope;
+        if (!["micro", "macro", "watcher", "all"].includes(scope)) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "scope must be micro, macro, watcher, or all" }));
+          return;
+        }
         if (!text) {
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "a steer needs some text" }));
           return;
         }
-        requestSteer(STATE_DIR, text.slice(0, 2000));
+        const selectedCampaign = (() => {
+          const read = db();
+          try { return campaignId(read); } finally { read.close(); }
+        })();
+        if (scope === "micro") {
+          requestSteer(STATE_DIR, text.slice(0, 2000));
+        } else {
+          const store = Store.open(DB_PATH);
+          try { requestAttentionSteer(store, selectedCampaign, scope, text); }
+          finally { store.close(); }
+        }
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, queued: text.slice(0, 2000) }));
+        res.end(JSON.stringify({ ok: true, scope, queued: text.slice(0, 4000) }));
       } catch {
         res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "expected JSON with a text field" }));
@@ -804,8 +1278,52 @@ createServer((req, res) => {
     return;
   }
 
+  // The counterpart to stopping. A stop is honoured at a cycle boundary and
+  // leaves the campaign's record intact, so resuming is simply relaunching the
+  // same campaign: it clears its stop reason and continues from the accepted
+  // baseline. The domain is read back from the campaign's own configuration so
+  // a resume cannot silently restart it against a different task.
+  if (req.method === "POST" && url.pathname === "/api/resume") {
+    if (inspect(STATE_DIR).state === "running") {
+      res.writeHead(409, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "the campaign is already running" }));
+      return;
+    }
+    const read = db();
+    let target: string;
+    let domain: string | null = null;
+    try {
+      target = campaignId(read);
+      const row = read.prepare("SELECT config_json FROM campaigns WHERE campaign_id=?")
+        .get(target) as { config_json: string } | undefined;
+      domain = row ? (JSON.parse(row.config_json)?.domain ?? null) : null;
+    } finally { read.close(); }
+    if (!domain) {
+      res.writeHead(409, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: false, error: "this campaign has no recorded domain to resume with" }));
+      return;
+    }
+    // A stop request that was never consumed would stop the new run at its
+    // first cycle boundary, which would look like the resume having failed.
+    clearStopRequest(STATE_DIR);
+    const cliPath = fileURLToPath(new URL("../cli.ts", import.meta.url));
+    const started = detach(STATE_DIR, cliPath, ["campaign", "--campaign", target, "--domain", domain]);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: true, pid: started.pid, logPath: started.logPath }));
+    return;
+  }
+
   if (req.method === "DELETE" && url.pathname === "/api/steer") {
-    clearSteer(STATE_DIR);
+    const scope = (url.searchParams.get("scope") ?? "macro") as AttentionSteerScope;
+    if (scope === "micro") clearSteer(STATE_DIR);
+    else {
+      const read = db();
+      let selectedCampaign: string;
+      try { selectedCampaign = campaignId(read); } finally { read.close(); }
+      const store = Store.open(DB_PATH);
+      try { withdrawAttentionSteers(store, selectedCampaign, scope); }
+      finally { store.close(); }
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: true }));
     return;
@@ -859,5 +1377,9 @@ createServer((req, res) => {
   }
 }).listen(PORT, "127.0.0.1", () => {
   console.log(`autoresearch dashboard  http://127.0.0.1:${PORT}`);
-  console.log(`campaign: ${CAMPAIGN}   (read-only; it cannot steer anything)`);
+  const conn = db();
+  try {
+    console.log(`campaign: ${campaignId(conn)}${PINNED_CAMPAIGN ? " (pinned)" : " (follows active)"}`);
+  } finally { conn.close(); }
+  console.log("evidence is read-only; steer/stop are explicit operator controls");
 });

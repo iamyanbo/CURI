@@ -5,6 +5,7 @@ import { categoryForTool, segmentAgentTrace, sumSegments } from "../src/ui/telem
 describe("dashboard trace timing", () => {
   it("keeps shell commands separate from ordinary tool calls", () => {
     assert.equal(categoryForTool("bash"), "command_execution");
+    assert.equal(categoryForTool("run"), "command_execution");
     assert.equal(categoryForTool("shell_command"), "command_execution");
     assert.equal(categoryForTool("read"), "tool_execution");
   });

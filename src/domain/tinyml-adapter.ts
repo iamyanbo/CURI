@@ -92,7 +92,7 @@ export function createTinymlAdapter(projectRoot: string): DomainAdapter {
       const res = spawnSync("python", [join(ctx.worktree, "train.py")], {
         cwd: ctx.worktree,
         encoding: "utf8",
-        timeout: ctx.timeoutMs,
+        timeout: ctx.timeoutMs > 0 ? ctx.timeoutMs : undefined,
         maxBuffer: 16 * 1024 * 1024,
         env: { ...process.env, TINYML_DATA: dataDir, OMP_NUM_THREADS: "1", MKL_NUM_THREADS: "1" },
       });
@@ -140,7 +140,7 @@ export function createTinymlAdapter(projectRoot: string): DomainAdapter {
       }
 
       const res = spawnSync("python", args, {
-        cwd: protectedRoot, encoding: "utf8", timeout: ctx.timeoutMs,
+        cwd: protectedRoot, encoding: "utf8", timeout: ctx.timeoutMs > 0 ? ctx.timeoutMs : undefined,
         maxBuffer: 16 * 1024 * 1024,
         env: { ...process.env, TINYML_DATA: dataDir, OMP_NUM_THREADS: "1", MKL_NUM_THREADS: "1" },
       });

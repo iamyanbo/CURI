@@ -217,6 +217,95 @@ CREATE TABLE events (
   schema_version     INTEGER NOT NULL
 );
 
+-- Continuous watcher configuration and campaign-local links into the
+-- user-level global memory database. Global IDs intentionally have no foreign
+-- key here because they belong to a separate portable SQLite store.
+CREATE TABLE watcher_subscriptions (
+  campaign_id        TEXT PRIMARY KEY REFERENCES campaigns(campaign_id),
+  enabled            INTEGER NOT NULL CHECK (enabled IN (0,1)),
+  interval_seconds   INTEGER NOT NULL CHECK (interval_seconds >= 30),
+  topics_json        TEXT NOT NULL,
+  feeds_json         TEXT NOT NULL,
+  query_strategy_json TEXT NOT NULL,
+  next_sweep_at      TEXT,
+  created_at         TEXT NOT NULL,
+  updated_at         TEXT NOT NULL
+);
+CREATE TABLE watcher_cursors (
+  campaign_id      TEXT NOT NULL REFERENCES campaigns(campaign_id),
+  provider         TEXT NOT NULL,
+  query_hash       TEXT NOT NULL,
+  query_text       TEXT NOT NULL,
+  cursor_json      TEXT NOT NULL,
+  watermark_at     TEXT,
+  etag             TEXT,
+  last_success_at  TEXT,
+  last_error       TEXT,
+  next_retry_at    TEXT,
+  PRIMARY KEY (campaign_id, provider, query_hash)
+);
+CREATE TABLE campaign_memory_links (
+  campaign_id    TEXT NOT NULL REFERENCES campaigns(campaign_id),
+  memory_kind    TEXT NOT NULL CHECK (memory_kind IN ('source','mechanism','idea','code_inventory')),
+  memory_id      TEXT NOT NULL,
+  relevance      REAL NOT NULL DEFAULT 0 CHECK (relevance BETWEEN 0 AND 1),
+  first_seen_at  TEXT NOT NULL,
+  last_seen_at   TEXT NOT NULL,
+  PRIMARY KEY (campaign_id, memory_kind, memory_id)
+);
+CREATE TABLE idea_cards (
+  idea_id               TEXT PRIMARY KEY,
+  campaign_id           TEXT NOT NULL REFERENCES campaigns(campaign_id),
+  mechanism_id          TEXT,
+  action                TEXT NOT NULL CHECK (action IN ('adopt','adapt','combine','verify','investigate')),
+  title                 TEXT NOT NULL,
+  target_domain         TEXT NOT NULL,
+  rationale             TEXT NOT NULL,
+  scores_json           TEXT NOT NULL,
+  code_status           TEXT NOT NULL CHECK (code_status IN ('absent','present','partial','unknown')),
+  assumptions_json      TEXT NOT NULL,
+  experiment_json       TEXT NOT NULL,
+  macro_implications    TEXT NOT NULL,
+  source_ids_json       TEXT NOT NULL,
+  state                 TEXT NOT NULL CHECK (state IN ('new','reviewed','accepted','rejected','scheduled','tested')),
+  signal_reason         TEXT,
+  created_at            TEXT NOT NULL,
+  updated_at            TEXT NOT NULL,
+  reviewed_at           TEXT
+);
+CREATE TABLE memory_retrievals (
+  retrieval_id    TEXT PRIMARY KEY,
+  campaign_id     TEXT NOT NULL REFERENCES campaigns(campaign_id),
+  attempt_id      TEXT REFERENCES attempts(attempt_id),
+  role            TEXT NOT NULL CHECK (role IN ('architect','manager','executor','watcher','human')),
+  query_text      TEXT NOT NULL,
+  filters_json    TEXT NOT NULL,
+  result_ids_json TEXT NOT NULL,
+  created_at      TEXT NOT NULL
+);
+CREATE TABLE attention_steers (
+  steer_id         TEXT PRIMARY KEY,
+  campaign_id      TEXT NOT NULL REFERENCES campaigns(campaign_id),
+  scope             TEXT NOT NULL CHECK (scope IN ('micro','macro','watcher','all')),
+  text              TEXT NOT NULL,
+  created_at        TEXT NOT NULL,
+  consumed_at       TEXT,
+  expires_program_revision INTEGER
+);
+CREATE TABLE campaign_source_enrichments (
+  campaign_id       TEXT NOT NULL REFERENCES campaigns(campaign_id),
+  source_version_id TEXT NOT NULL,
+  status            TEXT NOT NULL CHECK (status IN ('pending','succeeded','failed','waiting_external')),
+  model             TEXT,
+  prompt_hash       TEXT,
+  last_error        TEXT,
+  attempted_at      TEXT NOT NULL,
+  completed_at      TEXT,
+  PRIMARY KEY (campaign_id, source_version_id)
+);
+CREATE INDEX idx_campaign_enrichment_status
+  ON campaign_source_enrichments(campaign_id, status, attempted_at);
+
 CREATE TABLE intervals (
   interval_id   TEXT PRIMARY KEY,
   campaign_id   TEXT NOT NULL REFERENCES campaigns(campaign_id),
@@ -237,3 +326,6 @@ CREATE INDEX idx_intervals_res   ON intervals(campaign_id, resource_id, started_
 CREATE INDEX idx_evidence_hyp    ON evidence(hypothesis_id, status, kind);
 CREATE INDEX idx_events_seq      ON events(campaign_id, seq);
 CREATE INDEX idx_hyp_lane        ON hypotheses(campaign_id, lane, status);
+CREATE INDEX idx_ideas_signal     ON idea_cards(campaign_id, state, created_at);
+CREATE INDEX idx_memory_links     ON campaign_memory_links(campaign_id, relevance DESC, last_seen_at DESC);
+CREATE INDEX idx_retrieval_attempt ON memory_retrievals(attempt_id, created_at);

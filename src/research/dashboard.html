@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lean Research Runtime</title>
+<link rel="stylesheet" href="/vendor/katex.css">
+<style>
+:root{
+  --bg:#0d0d0f; --surface:#141416; --surface-2:#191a1d; --raised:#202125;
+  --line:#232428; --line-2:#2e3035;
+  --text:#ececee; --text-2:#a8a9ad; --text-3:#75767c;
+  --accent:#7f9cf5; --accent-dim:#3d4a7a; --accent-soft:#7f9cf51a;
+  --ok:#6ee7a8; --warn:#e8b660; --bad:#ef8b84; --info:#8ec5f0; --violet:#b7a6ee;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px;
+  --r1:6px; --r2:10px; --r3:12px;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased}
+
+/* scrollbars: the browser default is a bright slab against this background */
+*{scrollbar-width:thin;scrollbar-color:#2e3035 transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#2e3035;border-radius:8px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:#3d3f45}
+::-webkit-scrollbar-corner{background:transparent}
+
+.t-micro{font:11px/1.4 var(--mono);letter-spacing:.02em;color:var(--text-3)}
+.t-meta{font:12.5px/1.5 var(--sans);color:var(--text-3)}
+.t-small{font-size:13.5px;line-height:1.6;color:var(--text-2)}
+h1{font-size:19px;line-height:1.25;margin:0;font-weight:650;letter-spacing:-.01em}
+h2{font-size:12.5px;line-height:1;margin:0;font-weight:600;letter-spacing:.02em;text-transform:none;color:var(--text-2)}
+h3{font-size:16px;line-height:1.35;margin:0 0 var(--s2);font-weight:620}
+
+header{position:sticky;top:0;z-index:40;background:#0a0e13f5;backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar{padding:var(--s4) var(--s5);display:flex;align-items:center;gap:var(--s5);flex-wrap:wrap}
+.brand{display:flex;flex-direction:column;gap:2px;margin-right:auto;min-width:200px}
+.statline{display:flex;align-items:center;gap:var(--s5);flex-wrap:wrap}
+.stat-pair{display:flex;flex-direction:column;gap:1px;align-items:flex-end}
+.stat-pair b{font:550 14px/1.2 var(--sans);font-variant-numeric:tabular-nums;color:var(--text)}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px;vertical-align:1px}
+.dot.on{background:var(--ok);box-shadow:0 0 0 3px #4ade8022}
+.dot.off{background:var(--text-3)}
+nav{display:flex;gap:2px;padding:0 var(--s5);overflow-x:auto}
+nav button{background:none;border:none;border-bottom:2px solid transparent;color:var(--text-3);
+  font:500 13.5px/1 var(--sans);padding:14px var(--s4);cursor:pointer;white-space:nowrap}
+nav button:hover{color:var(--text-2)}
+nav button.active{color:var(--text);border-bottom-color:var(--accent)}
+nav button .count{font:11px var(--mono);color:var(--text-3);margin-left:6px}
+
+main{max-width:1560px;margin:0 auto;padding:var(--s5);display:flex;flex-direction:column;gap:var(--s5)}
+.view{display:none;flex-direction:column;gap:var(--s5)}
+.view.on{display:flex}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r3);overflow:hidden}
+.card>.head{background:var(--surface)}
+.card>.head{border-bottom:1px solid var(--line);padding:14px var(--s5);display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap}
+.card>.head h2{margin-right:auto}
+.pad{padding:var(--s5)}
+.grid{display:grid;gap:var(--s5)}
+.g-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g-obs{grid-template-columns:minmax(0,1.15fr) minmax(0,1fr)}
+
+.chip{border:1px solid var(--line-2);background:var(--surface-2);color:var(--text-2);border-radius:999px;
+  padding:5px 11px;cursor:pointer;font:500 12px/1 var(--sans);transition:.12s ease}
+.chip:hover{border-color:var(--accent-dim);color:var(--text)}
+.chip.active{background:var(--accent-soft);border-color:var(--accent-dim);color:var(--text)}
+.chip.on{border-color:#6ee7a855;color:var(--ok)}
+.btn{border:1px solid var(--line-2);background:var(--surface-2);color:var(--text-2);border-radius:var(--r1);
+  padding:6px 12px;cursor:pointer;font:500 12px/1 var(--sans)}
+.btn:hover{border-color:var(--accent-dim);color:var(--text)}
+.btn.primary{border-color:var(--accent-dim);background:var(--accent-soft);color:var(--text)}
+input[type=search]{border:1px solid var(--line-2);background:var(--bg);color:var(--text);border-radius:999px;
+  padding:6px 12px;font:12px/1 var(--mono);min-width:170px}
+input:focus{outline:none;border-color:var(--accent-dim)}
+.toolbar{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;padding:var(--s3) var(--s4);border-bottom:1px solid var(--line)}
+
+.prose{font-size:15px;line-height:1.7;color:var(--text);max-width:78ch}
+.actions{display:flex;gap:var(--s3);flex-wrap:wrap;align-items:center;margin-top:var(--s4)}
+.prose>*:first-child{margin-top:0}.prose>*:last-child{margin-bottom:0}
+.prose h1{font-size:18px;margin:var(--s5) 0 var(--s2);font-weight:640}
+.prose h2{font-size:15px;margin:var(--s5) 0 var(--s2);text-transform:none;letter-spacing:0;color:var(--text);font-weight:620}
+.prose h3{font-size:14px;margin:var(--s4) 0 var(--s1);color:var(--text-2);font-weight:600}
+.prose p{margin:0 0 var(--s3)}
+.prose ul,.prose ol{margin:0 0 var(--s3);padding-left:var(--s5)}
+.prose li{margin-bottom:var(--s1)}
+.prose li::marker{color:var(--text-3)}
+.prose strong{color:#fff;font-weight:620}
+.prose code{font:12.5px/1.5 var(--mono);background:var(--raised);border:1px solid var(--line);border-radius:4px;padding:1px 5px;color:var(--text-2)}
+.prose pre{background:var(--bg);border:1px solid var(--line);border-radius:var(--r1);padding:var(--s3);overflow-x:auto;margin:0 0 var(--s3)}
+.prose pre code{background:none;border:none;padding:0;color:var(--text-2)}
+.prose table{border-collapse:collapse;width:100%;margin:0 0 var(--s3);font-size:13px}
+.prose th,.prose td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+.prose th{background:var(--surface-2);font-weight:600;color:var(--text-2)}
+.prose a{color:var(--accent);text-decoration:none}
+.prose a:hover{text-decoration:underline}
+.katex{font-size:1.02em}
+.katex-display{margin:var(--s3) 0;overflow-x:auto;overflow-y:hidden;padding:2px 0}
+.clip{max-height:340px;overflow:auto}
+.clip-sm{max-height:200px;overflow:auto}
+
+.idchip{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--line-2);
+  border-radius:5px;padding:0 6px;font-size:12.5px;color:var(--text-2);white-space:nowrap;cursor:help;text-decoration:none}
+.idchip::before{content:"";width:5px;height:5px;border-radius:1px;background:var(--text-3)}
+.idchip.comp::before{background:var(--accent)}
+.idchip.src::before{background:var(--violet)}
+.idchip.out::before{background:var(--info)}
+.idchip.syn::before{background:var(--warn)}
+
+.finding{border:1px solid var(--line);border-radius:var(--r2);background:var(--surface-2);margin-bottom:var(--s5)}
+.finding>.head{padding:14px var(--s5);border-bottom:1px solid var(--line);display:flex;gap:var(--s3);align-items:baseline;flex-wrap:wrap}
+.finding>.head h3{margin:0;flex:1}
+.finding .body{padding:var(--s5)}
+.finding .foot{padding:14px var(--s5);border-top:1px solid var(--line);display:flex;gap:var(--s3);flex-wrap:wrap;align-items:center}
+.status{display:inline-flex;align-items:center;gap:5px;font:500 11.5px/1 var(--sans);letter-spacing:.01em;
+  padding:5px 10px;border-radius:999px;border:1px solid;text-transform:capitalize}
+.status.tentative,.status.bounded{color:var(--warn);border-color:#e8b66040;background:#e8b6600f}
+.status.accepted,.status.supported{color:var(--ok);border-color:#6ee7a840;background:#6ee7a80f}
+.status.rejected,.status.refuted{color:var(--bad);border-color:#ef8b8440;background:#ef8b840f}
+.status.needs_evidence{color:var(--info);border-color:#8ec5f040;background:#8ec5f00f}
+.status.superseded,.status.inconclusive,.status.blocked{color:var(--text-3);border-color:var(--line-2)}
+.provenance{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;margin-top:var(--s3);padding-top:var(--s3);border-top:1px dashed var(--line)}
+.missing{color:var(--warn)}
+
+.rows{display:flex;flex-direction:column}
+.row{display:flex;gap:var(--s4);align-items:baseline;padding:14px var(--s5);border-bottom:1px solid var(--line);cursor:pointer}
+.row:last-child{border-bottom:none}
+.row:hover{background:var(--surface-2)}
+.row.sel{background:var(--raised);box-shadow:inset 2px 0 0 var(--accent)}
+.row b a{color:inherit}
+.row .grow{flex:1;min-width:0}
+.row b{font-weight:560;font-size:14px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scroll-md{max-height:420px;overflow:auto}
+.scroll-lg{max-height:640px;overflow:auto}
+.empty{color:var(--text-3);padding:var(--s6) var(--s4);text-align:center;font-size:13px}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:var(--s2)}
+.stat{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r1);padding:var(--s3)}
+.stat b{display:block;font:640 21px/1.1 var(--sans);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.stat span{display:block;margin-top:3px;font-size:11px;color:var(--text-3)}
+.stat.warn b{color:var(--warn)}
+
+.pipeline{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s5);padding:var(--s4)}
+.role{position:relative;border:1px solid var(--line);border-radius:var(--r2);padding:var(--s4);background:var(--surface-2);cursor:pointer}
+.role:not(:last-child)::after{content:"";position:absolute;right:calc(var(--s5) * -1 - 1px);top:50%;width:var(--s5);height:1px;background:var(--line-2)}
+.role.live{border-color:var(--accent-dim);background:#5eead40a}
+.role.down{opacity:.5;border-style:dashed}
+.role b{display:block;font-size:15px;font-weight:600;margin-bottom:2px}
+.role .what{font-size:12.5px;color:var(--text-3);margin-bottom:var(--s3)}
+
+#graph{width:100%;display:block;padding:var(--s4)}
+.node rect{fill:var(--surface-2);stroke:var(--line-2);stroke-width:1.5;cursor:pointer}
+.node:hover rect{stroke:var(--accent-dim)}
+.node.active rect{stroke:var(--accent);stroke-width:2}
+.node text{fill:var(--text);font:12.5px var(--sans);pointer-events:none}
+.node text.sub{fill:var(--text-3);font-size:10.5px}
+.edge{stroke:var(--line-2);stroke-width:1.4;fill:none;marker-end:url(#arrow)}
+.edge-label{fill:var(--text-3);font:10px var(--mono)}
+
+.legend{display:flex;gap:var(--s4);flex-wrap:wrap;padding:var(--s2) var(--s4);border-bottom:1px solid var(--line)}
+.legend span{font:11px/1.4 var(--mono);color:var(--text-3)}
+.legend i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px}
+.roll{position:relative;overflow:auto;max-height:460px}
+.ruler{position:sticky;top:0;z-index:3;height:24px;background:var(--surface);border-bottom:1px solid var(--line);display:grid;grid-template-columns:190px 1fr}
+.ticks{position:relative}
+.tick{position:absolute;top:0;bottom:0;border-left:1px solid var(--line);padding-left:5px;font:10px/24px var(--mono);color:var(--text-3);white-space:nowrap}
+.lane{display:grid;grid-template-columns:190px 1fr;border-bottom:1px solid var(--line);cursor:pointer}
+.lane:hover{background:var(--surface-2)}
+.lane.active{background:var(--raised);box-shadow:inset 2px 0 0 var(--accent)}
+.lane-name{padding:var(--s2) var(--s3);border-right:1px solid var(--line);overflow:hidden}
+.lane-name b{display:block;font:600 12px/1.3 var(--sans);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mix{display:flex;height:3px;border-radius:2px;overflow:hidden;margin-top:5px;background:var(--bg)}
+.mix i{display:block;height:100%}
+.track{position:relative;height:34px;background:var(--bg)}
+.seg{position:absolute;top:8px;height:12px;border-radius:3px;min-width:2px}
+.seg.thinking{background:var(--violet)}
+.seg.tool{background:#6f8fd0}
+.seg.model{background:var(--info)}
+.seg.err{background:var(--bad);top:23px;height:6px}
+.seg.live{background-image:repeating-linear-gradient(45deg,#ffffff30 0 5px,transparent 5px 10px);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
+.seg:hover{outline:1px solid var(--text-2)}
+.seg.sel{outline:2px solid var(--warn);z-index:2}
+.span{position:absolute;top:3px;height:28px;border:1px solid var(--line-2);border-radius:5px;background:#ffffff05}
+.span.active{border-color:var(--accent-dim);background:#5eead40d}
+.span.failed{border-color:#f8717144;background:#f871710d}
+.span.cancelled{border-style:dashed}
+.nowline{position:absolute;top:0;bottom:0;width:1px;background:var(--ok);pointer-events:none;z-index:4}
+#tip{position:fixed;z-index:90;pointer-events:none;display:none;background:var(--raised);border:1px solid var(--line-2);
+  border-radius:var(--r1);padding:var(--s2) var(--s3);font:11px/1.5 var(--mono);max-width:360px}
+
+#trace{overflow:auto;max-height:460px}
+.step{display:grid;grid-template-columns:60px 1fr;gap:var(--s3);padding:var(--s2) var(--s4);border-bottom:1px solid var(--line);align-items:start}
+.step:hover{background:var(--surface-2)}
+.step.sel{background:var(--raised);box-shadow:inset 2px 0 0 var(--warn)}
+.step.error{background:#f871710a}
+.step .when{text-align:right;font:11px/1.6 var(--mono);color:var(--text-3)}
+.step .when b{display:block;color:var(--text-2);font-size:11.5px;font-weight:500}
+.tag{display:inline-block;border-radius:4px;padding:1px 6px;font:11px/1.5 var(--mono);border:1px solid var(--line-2);color:var(--text-3);margin-right:5px}
+.tag.tool_call{border-color:#3d4a7a;color:var(--accent)}
+.tag.tool_result{border-color:#7dd3fc44;color:var(--info)}
+.tag.thinking{border-color:#c4b5fd44;color:var(--violet)}
+.tag.text{border-color:#fbbf2444;color:var(--warn)}
+.tag.err{border-color:#f8717155;color:var(--bad)}
+.step .line{font-size:13px;color:var(--text-2);word-break:break-word}
+.step pre{margin:var(--s2) 0 0;white-space:pre-wrap;word-break:break-word;font:11.5px/1.5 var(--mono);color:var(--text-2);
+  background:var(--bg);border:1px solid var(--line);border-radius:var(--r1);padding:var(--s2);max-height:220px;overflow:auto}
+details summary{cursor:pointer;font:11px var(--mono);color:var(--text-3);padding:var(--s1) 0}
+.filelist{border:1px solid var(--line);border-radius:var(--r1);overflow:hidden}
+.file{display:grid;grid-template-columns:1fr auto auto;gap:var(--s3);padding:6px var(--s3);border-bottom:1px solid var(--line);cursor:pointer;font:12px/1.5 var(--mono)}
+.file:last-child{border-bottom:none}
+.file:hover{background:var(--surface-2);color:var(--accent)}
+.file span{color:var(--text-3);font-size:11px}
+@media(max-width:1180px){.g-obs,.g-2{grid-template-columns:1fr}.pipeline{grid-template-columns:1fr}
+  .role:not(:last-child)::after{display:none}}
+</style></head><body>
+<header>
+  <div class="topbar">
+    <div class="brand"><h1 id="title">Lean Research Runtime</h1><div id="subtitle" class="t-meta"></div></div>
+    <div class="statline" id="headstats"></div>
+    <button id="pause" class="chip on">live</button>
+  </div>
+  <nav id="nav"></nav>
+</header>
+
+<main>
+  <section class="view" data-view="overview">
+    <div class="card">
+      <div class="head"><h2>What is happening now</h2><span id="now-note" class="t-meta"></span></div>
+      <div id="now" class="pad"></div>
+    </div>
+    <div class="card">
+      <div class="head"><h2>Live pipeline</h2><span class="t-meta">one experiment at a time</span></div>
+      <div id="pipeline" class="pipeline"></div>
+    </div>
+    <div class="card">
+      <div class="head"><h2>Findings and tasks</h2><span id="tasks-note" class="t-meta"></span></div>
+      <div id="tasks" class="rows scroll-md"></div>
+    </div>
+  </section>
+
+  <section class="view" data-view="understanding">
+    <div class="card">
+      <div class="head"><h2>Current understanding</h2><span id="understanding-note" class="t-meta"></span></div>
+      <div id="scope" class="toolbar"></div>
+      <div id="understanding" class="pad scroll-lg"></div>
+    </div>
+  </section>
+
+  <section class="view" data-view="components">
+    <div class="card">
+      <div class="head"><h2>Component system</h2><span id="graph-note" class="t-meta"></span></div>
+      <div id="graph-empty"></div>
+      <svg id="graph" preserveAspectRatio="xMidYMin meet"></svg>
+    </div>
+    <div class="card">
+      <div class="head"><h2 id="comp-detail-title">Thread detail</h2><span id="comp-detail-note" class="t-meta"></span></div>
+      <div id="comp-detail" class="pad"></div>
+    </div>
+  </section>
+
+  <section class="view" data-view="task">
+    <div class="card">
+      <div class="head"><h2 id="detail-title">Task</h2><button class="btn" id="detail-close">back</button></div>
+      <div id="detail" class="pad scroll-lg"></div>
+    </div>
+  </section>
+
+  <section class="view" data-view="execution">
+    <div class="grid g-obs">
+      <div class="card">
+        <div class="head"><h2>Execution piano roll</h2><span id="roll-note" class="t-meta"></span></div>
+        <div id="rollbar" class="toolbar"></div>
+        <div class="legend">
+          <span><i style="background:var(--violet)"></i>reasoning</span>
+          <span><i style="background:var(--accent)"></i>tool call</span>
+          <span><i style="background:var(--info)"></i>model output</span>
+          <span><i style="background:var(--bad)"></i>tool error</span>
+          <span><i style="background:var(--bg);border:1px solid var(--line-2)"></i>waiting on model</span>
+          <span><i style="background:var(--accent);background-image:repeating-linear-gradient(45deg,#ffffff44 0 4px,transparent 4px 8px)"></i>in flight</span>
+        </div>
+        <div id="roll" class="roll"></div>
+      </div>
+      <div class="card">
+        <div class="head"><h2>Live agent trace</h2><span id="trace-note" class="t-meta"></span></div>
+        <div id="tracebar" class="toolbar"></div>
+        <div id="trace"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="view" data-view="sources">
+    <div class="card">
+      <div class="head"><h2>Watcher intake</h2><span id="source-count" class="t-meta"></span></div>
+      <div id="sources" class="rows" style="max-height:none"></div>
+    </div>
+  </section>
+
+  <section class="view" data-view="diagnostics">
+    <div class="card">
+      <div class="head"><h2>Runtime diagnostics</h2><span class="t-meta">observed state</span></div>
+      <div id="diagnostics" class="pad"></div>
+    </div>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script src="/vendor/marked.js"></script>
+<script src="/vendor/katex.js"></script>
+<script>
+const $=s=>document.querySelector(s),arr=x=>Array.isArray(x)?x:[];
+const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let S=null,view='overview',component='__all',task=null,lane=null,live=true,zoom=60,roleFilter='all',
+    traceFilter='all',traceQuery='',follow=true,selSeq=null,expanded=new Set(),filePreview=null;
+const runDetail=new Map();let detailPending=null;
+
+/* A three second poll used to rebuild every panel, closing whatever the reader
+   had open. Each section now re-renders only when its own data changes. */
+const drawn={};
+function ifChanged(key,signature,draw){if(drawn[key]===signature)return;drawn[key]=signature;draw()}
+function invalidate(key){delete drawn[key]}
+
+function fmt(ms){ms=Math.max(0,Math.round(ms));if(ms<1000)return ms+'ms';if(ms<60000)return(ms/1000).toFixed(1)+'s';
+  if(ms<3600000)return Math.floor(ms/60000)+'m '+Math.floor(ms%60000/1000)+'s';
+  return Math.floor(ms/3600000)+'h '+Math.floor(ms%3600000/60000)+'m'}
+function clock(ms){return new Date(ms).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+function bytes(n){if(n<1024)return n+' B';if(n<1048576)return(n/1024).toFixed(1)+' KB';return(n/1048576).toFixed(1)+' MB'}
+function ago(iso){if(!iso)return'unknown';return fmt(Date.now()-Date.parse(iso))+' ago'}
+function tokens(n){n=Number(n||0);return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(0)+'k':String(n)}
+
+function renderMarkdown(src){
+  const text=String(src??'');if(!text.trim())return'';
+  const math=[];
+  const stash=(tex,display)=>{math.push({tex,display});return '%%MATH'+(math.length-1)+'%%'};
+  const staged=text
+    .replace(/\$\$([\s\S]+?)\$\$/g,(_,t)=>stash(t,true))
+    .replace(/(^|[^\\$])\$(?!\s)([^$\n]+?)\$/g,(_,pre,t)=>pre+stash(t,false));
+  // Source cards and titles come from the open web through the watcher, so raw
+  // HTML in research prose is attacker-influenced. Neutralise it: Markdown here
+  // never needs embedded HTML, and a hosted mirror would otherwise carry stored XSS.
+  if(window.marked&&!marked.__htmlNeutralised){
+    marked.use({renderer:{html(token){return esc(typeof token==='string'?token:(token&&token.text)||'')}}});
+    marked.__htmlNeutralised=true;
+  }
+  let html;
+  try{html=window.marked?marked.parse(staged,{gfm:true}):'<pre>'+esc(staged)+'</pre>'}
+  catch(e){html='<pre>'+esc(staged)+'</pre>'}
+  return html.replace(/%%MATH(\d+)%%/g,(_,i)=>{
+    const m=math[Number(i)];if(!m)return'';
+    try{return window.katex?katex.renderToString(m.tex,{displayMode:m.display,throwOnError:false}):esc(m.tex)}
+    catch(e){return '<code>'+esc(m.tex)+'</code>'}});
+}
+function idNames(){
+  const names=new Map();
+  arr(S.components).forEach(c=>names.set(c.component_id,{label:c.title,cls:'comp'}));
+  arr(S.sources).forEach(x=>names.set(x.source_id,{label:x.title,cls:'src'}));
+  arr(S.outcomes).forEach(o=>{
+    const t=arr(S.tasks).find(x=>x.task_id===o.task_id);
+    const title=t?String(t.brief_md).split(/\r?\n/)[0].replace(/^#+\s*/,'').replace(/^Task:\s*/i,''):'';
+    names.set(o.outcome_id,{label:title||o.verdict+' finding',cls:'out'});
+  });
+  arr(S.syntheses).forEach(x=>names.set(x.synthesis_id,{label:'synthesis',cls:'syn'}));
+  return names;
+}
+function absorbParenthetical(chip,node){
+  if(!node||node.nodeType!==3)return;
+  const paren=node.nodeValue.match(/^\s*\(([^()]{2,60})\)/);
+  if(paren){chip.textContent=paren[1].slice(0,44);node.nodeValue=node.nodeValue.slice(paren[0].length)}
+}
+function linkifyIds(root){
+  if(!S||!root)return;
+  const names=idNames();
+  const re=/\b(?:COMP|SRC|OUT|SYN|TASK)-[0-9a-fA-F-]{6,}\b/g;
+  const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+  const targets=[];let n;
+  while((n=walker.nextNode())){re.lastIndex=0;if(re.test(n.nodeValue))targets.push(n)}
+  for(const node of targets){
+    const parent=node.parentElement;
+    if(parent&&parent.closest('.katex,pre'))continue;
+    if(parent&&parent.closest('code')){
+      const codeEl=parent.closest('code');
+      const id=(codeEl.textContent||'').trim();
+      if(!/^(?:COMP|SRC|OUT|SYN|TASK)-[0-9a-fA-F-]{6,}$/.test(id))continue;
+      let hit=names.get(id);
+      if(!hit)for(const [k,v] of names)if(k.toLowerCase()===id.toLowerCase()){hit=v;break}
+      const chip=document.createElement('span');
+      chip.className='idchip '+(hit?hit.cls:'');chip.title=id;
+      chip.textContent=hit?String(hit.label).slice(0,44):id;
+      codeEl.replaceWith(chip);absorbParenthetical(chip,chip.nextSibling);
+      continue;
+    }
+    const value=node.nodeValue,frag=document.createDocumentFragment();
+    let last=0,m;re.lastIndex=0;const chips=[];
+    while((m=re.exec(value))){
+      frag.append(value.slice(last,m.index));
+      let hit=names.get(m[0]);
+      if(!hit)for(const [k,v] of names)if(k.toLowerCase()===m[0].toLowerCase()){hit=v;break}
+      const chip=document.createElement('span');
+      chip.className='idchip '+(hit?hit.cls:'');chip.title=m[0];
+      chip.textContent=hit?String(hit.label).slice(0,44):m[0];
+      frag.append(chip);chips.push(chip);last=m.index+m[0].length;
+    }
+    const tail=document.createTextNode(value.slice(last));
+    frag.append(tail);node.replaceWith(frag);
+    if(chips.length)absorbParenthetical(chips[chips.length-1],tail);
+  }
+}
+function stripLeadingHeading(md){
+  const text=String(md??'');const lines=text.split(/\r?\n/);
+  let i=0;while(i<lines.length&&!lines[i].trim())i++;
+  if(i>=lines.length||!/^#{1,3}\s+/.test(lines[i]))return text;
+  i++;while(i<lines.length&&!lines[i].trim())i++;
+  return lines.slice(i).join('\n');
+}
+function prose(host,markdown){if(!host)return;host.innerHTML=renderMarkdown(markdown);linkifyIds(host)}
+
+/* --- header + nav --- */
+function headStats(){
+  const spend=S.spend||{},ceiling=Number((S.budget&&S.budget.ceilingUsd)||0),tl=S.timeline||{};
+  const running=arr(S.execution?.lanes).some(l=>l.state==='active');
+  const pairs=[
+    ['status',(running?'working':S.direction.status)],
+    ['elapsed',tl.firstRunAt?fmt(Date.now()-Date.parse(tl.firstRunAt)):'—'],
+    ['worked',fmt(tl.workedMs||0)],
+    ['tokens in',tokens(spend.inputTokens)],
+    ['tokens out',tokens(spend.outputTokens)],
+    ['spend','$'+Number(spend.costUsd||0).toFixed(2)+(ceiling?' / $'+ceiling:'')],
+  ];
+  $('#headstats').innerHTML=pairs.map(([k,v])=>
+    `<div class="stat-pair"><span class="t-micro">${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
+}
+function navBar(){
+  const items=[['overview','Overview',''],['understanding','Understanding',arr(S.syntheses).length],
+    ['components','Components',arr(S.components).length],['execution','Execution',arr(S.execution?.lanes).length],
+    ['sources','Sources',arr(S.sources).length],['diagnostics','Diagnostics','']];
+  if(task)items.splice(4,0,['task','Task detail','']);
+  $('#nav').innerHTML=items.map(([id,label,count])=>
+    `<button data-view="${id}" class="${view===id?'active':''}">${esc(label)}${count!==''?`<span class="count">${count}</span>`:''}</button>`).join('');
+  $('#nav').querySelectorAll('[data-view]').forEach(el=>el.onclick=()=>{view=el.dataset.view;
+    // Views are addressable so a particular panel can be linked to or reloaded into.
+    if(location.hash.slice(1)!==view)history.replaceState(null,'','#'+view);
+    paint()});
+  document.querySelectorAll('.view').forEach(el=>el.classList.toggle('on',el.dataset.view===view));
+}
+
+/* --- overview --- */
+function nowPanel(){
+  const order=['executor','orchestrator','watcher'];
+  const active=arr(S.execution?.lanes).filter(l=>l.state==='active').sort((a,b)=>order.indexOf(a.role)-order.indexOf(b.role));
+  const queued=arr(S.tasks).filter(t=>t.state==='queued'),awaiting=arr(S.tasks).filter(t=>t.state==='awaiting_orchestrator');
+  $('#now-note').textContent=active.length?active.length+' running':'nothing running';
+  if(!active.length){
+    const paused=S.direction?.status!=='active';
+    const why=paused?'The orchestrator paused this direction: it stops when it judges a milestone reached rather than manufacturing more work. Restart the supervisor to continue.'
+      :awaiting.length?'An executor result is waiting for the orchestrator to interpret it.'
+      :queued.length?'A task is queued; the next executor attempt is about to start.'
+      :S.supervisor?.running?'The supervisor is up and will wake the orchestrator when something changes.'
+      :'The supervisor is not running, so no research is being done.';
+    const continuous=Boolean(S.continuous);
+    $('#now').innerHTML='<div class="t-small">'+esc(why)+'</div>'
+      +'<div class="actions">'
+      +((paused||!S.supervisor?.running)?'<button class="btn primary" id="resume">Resume research</button>':'')
+      +'<button class="btn" id="continuous">'+(continuous?'Continuous · on':'Continuous · off')+'</button>'
+      +'<span class="t-small" style="color:var(--text-3);flex:1;min-width:220px">Continuous keeps an unattended run going when the orchestrator judges a milestone reached. The pause and its reasoning are still recorded either way.</span>'
+      +'</div>';
+    const resume=$('#resume');
+    if(resume)resume.onclick=async()=>{resume.disabled=true;resume.textContent='starting…';
+      await fetch('/api/control',{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({action:'resume',reason:'Resumed from the dashboard.'})});
+      invalidate('now');await load()};
+    $('#continuous').onclick=async()=>{
+      await fetch('/api/control',{method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({action:'continuous',enabled:!continuous})});
+      invalidate('now');await load()};
+    return;
+  }
+  $('#now').innerHTML=active.map(l=>{
+    const t=arr(S.tasks).find(x=>x.task_id===l.taskId),b=l.breakdown||{},hb=l.heartbeat;
+    const liveSeg=arr(l.segments).find(x=>x.live);
+    const attempts=arr(S.execution?.lanes).filter(x=>x.taskId===l.taskId&&x.role==='executor'
+      &&x.state!=='cancelled'&&x.failure!=='PROCESS_LOST_ON_RESTART').length;
+    const files=t&&t.workspace?arr(t.workspace.files).length:0;
+    const cells=[['running for',fmt(l.durationMs)],
+      ['right now',(liveSeg?liveSeg.label:(hb&&hb.phase)||'working')+(liveSeg?' · '+fmt(liveSeg.endMs-liveSeg.startMs):'')],
+      ['tool / waiting',fmt(b.tool||0)+' · '+fmt(b.waiting||0)],
+      [l.role==='executor'?'attempt':'trace steps',l.role==='executor'?attempts+' of 3':(l.traceTotal||0)]];
+    if(l.role==='executor')cells.push(['files written',files]);
+    if(b.errors)cells.push(['tool errors',b.errors]);
+    return `<div class="finding" data-lane="${esc(l.id)}" style="cursor:pointer;margin-bottom:12px">
+      <div class="head"><h3>${esc(l.role)}</h3><span class="t-meta">${esc(String(l.title).slice(0,84))}</span>
+        <span class="status accepted"><span class="dot on"></span>active</span></div>
+      <div class="body"><div class="stats">${cells.map(([k,v])=>
+        `<div class="stat"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('')}</div>
+        <div class="t-meta" style="margin-top:12px">observed ${ago(hb&&hb.observedAt)} · last progress ${ago(hb&&hb.lastProgressAt)}</div>
+      </div></div>`}).join('');
+  $('#now').querySelectorAll('[data-lane]').forEach(el=>el.onclick=()=>{lane=el.dataset.lane;selSeq=null;view='execution';invalidate('roll');paint()});
+}
+function roleActivity(role){
+  const runs=arr(S.execution?.lanes).filter(l=>l.role===role);
+  const running=runs.find(l=>l.state==='active')||null,last=runs[0]||null;
+  const daemon=role==='watcher'?Boolean(S.watcher?.running):Boolean(S.supervisor?.running);
+  return{role,running,last,daemon,status:running?'running':daemon?'idle':'stopped'};
+}
+function pipeline(){
+  const defs=[['watcher','Watcher','finds, retrieves and filters prior work'],
+    ['orchestrator','Orchestrator','asks the question, delegates, interprets'],
+    ['executor','Executor','implements, runs and reports one task']];
+  $('#pipeline').innerHTML=defs.map(([role,name,what])=>{
+    const a=roleActivity(role);
+    const detail=a.running?fmt(a.running.durationMs)+' · '+((a.running.heartbeat&&a.running.heartbeat.phase)||'working')
+      :a.status==='idle'?(a.last?'idle · last ran '+ago(a.last.completedAt||a.last.startedAt):'idle · never run')
+      :'process not running';
+    return `<div class="role ${a.running?'live':''} ${a.status==='stopped'?'down':''}" data-role-card="${role}">
+      <b>${name}</b><div class="what">${what}</div>
+      <div class="t-meta"><span class="dot ${a.running?'on':'off'}"></span>${esc(detail)}</div></div>`}).join('');
+  $('#pipeline').querySelectorAll('[data-role-card]').forEach(el=>el.onclick=()=>{
+    const a=roleActivity(el.dataset.roleCard),target=a.running||a.last;if(!target)return;
+    roleFilter='all';lane=target.id;selSeq=null;view='execution';invalidate('roll');paint()});
+}
+function filteredTasks(){return arr(S.tasks).filter(t=>component==='__all'||(t.component_id||'__general')===component)}
+function tasksPanel(){
+  const ts=filteredTasks();
+  $('#tasks-note').textContent=ts.length+' tasks · '+arr(S.outcomes).length+' concluded';
+  $('#tasks').innerHTML=ts.length?ts.map(t=>{
+    const o=arr(S.outcomes).find(x=>x.task_id===t.task_id);
+    const undigested=o&&arr(S.knowledge?.undigestedOutcomeIds).includes(o.outcome_id);
+    const title=String(t.brief_md).split(/\r?\n/)[0].replace(/^#+\s*/,'').replace(/^Task:\s*/i,'');
+    return `<div class="row ${task===t.task_id?'sel':''}" data-open="${esc(t.task_id)}">
+      <div class="grow"><b>${esc(title)}</b><span class="t-meta">${esc(t.state)}${undigested?' · undigested findings':''}</span></div>
+      ${o?`<span class="status ${esc(o.verdict)}">${esc(o.verdict)}</span>`:'<span class="t-meta">running</span>'}</div>`}).join('')
+    :'<div class="empty">No tasks in this scope.</div>';
+  $('#tasks').querySelectorAll('[data-open]').forEach(el=>el.onclick=()=>{
+    task=el.dataset.open;filePreview=null;view='task';invalidate('detail');paint()});
+}
+
+/* --- understanding --- */
+function scoped(x){
+  if(component==='__all')return true;
+  const ids=arr(x.componentIds);if(ids.length)return ids.includes(component);
+  return (x.component_id||'__general')===component;
+}
+function understanding(){
+  $('#scope').innerHTML='<span class="t-micro">scope</span>'
+    +`<button class="chip ${component==='__all'?'active':''}" data-scope="__all">everything</button>`
+    +arr(S.components).map(c=>`<button class="chip ${component===c.component_id?'active':''}" data-scope="${esc(c.component_id)}">${esc(c.title)}</button>`).join('')
+    +`<button class="chip ${component==='__general'?'active':''}" data-scope="__general">unassigned</button>`;
+  $('#scope').querySelectorAll('[data-scope]').forEach(el=>el.onclick=()=>{
+    component=el.dataset.scope;invalidate('understanding');invalidate('tasks');invalidate('roll');invalidate('components');paint()});
+  const syn=arr(S.syntheses).filter(scoped);
+  $('#understanding-note').textContent=syn.length+' revisions · human review decides what stands';
+  const host=$('#understanding');
+  if(!syn.length){host.innerHTML='<div class="empty">No synthesis in this scope yet. Findings stay visible as tentative outcomes until the orchestrator synthesises them.</div>';return}
+  host.innerHTML=syn.map(s=>{
+    const status=s.status||'tentative';
+    const spans=arr(s.componentIds).map(id=>arr(S.components).find(c=>c.component_id===id)?.title||id);
+    const title=(String(s.body_md).split(/\r?\n/).find(l=>l.trim())||'Synthesis').replace(/^#+\s*/,'').replace(/^Synthesis:\s*/i,'');
+    return `<article class="finding">
+      <div class="head"><h3>${esc(title)}</h3><span class="status ${esc(status)}">${esc(String(status).replace('_',' '))}</span></div>
+      <div class="body">
+        <div class="prose" data-md="${esc(s.synthesis_id)}"></div>
+        <div class="provenance"><span class="t-micro">spans</span>${
+          spans.map(x=>`<span class="idchip comp">${esc(x)}</span>`).join('')||'<span class="t-meta">direction level</span>'}</div>
+        <div class="provenance"><span class="t-micro">evidence</span>
+          ${arr(s.outcomeIds).map(x=>`<span class="idchip out" title="${esc(x)}">finding</span>`).join('')
+            ||'<span class="missing t-meta">no outcomes cited</span>'}
+          ${arr(s.sourceIds).map(id=>{const src=arr(S.sources).find(y=>y.source_id===id);
+            return `<a class="idchip src" href="${esc((src&&src.canonical_url)||'#')}" target="_blank" rel="noreferrer" title="${esc(id)}">${esc(String((src&&src.title)||id).slice(0,38))}</a>`}).join('')
+            ||'<span class="missing t-meta">no sources cited</span>'}</div>
+        ${s.review?`<div class="t-meta" style="margin-top:12px">human review: ${esc(s.review.note_md)}</div>`:''}
+      </div>
+      <div class="foot"><span class="t-micro">${esc(s.synthesis_id)}</span>
+        <span class="t-small" style="color:var(--text-3)">Your verdict and the reason you type both reach the orchestrator's next turn.</span>
+        <span style="margin-left:auto"></span>
+        <button class="btn primary" data-review="accepted" data-syn="${esc(s.synthesis_id)}"
+          title="Marks this revision as current understanding: later work builds on it rather than relitigating it, and it supersedes the revision it replaced.">accept</button>
+        <button class="btn" data-review="needs_evidence" data-syn="${esc(s.synthesis_id)}"
+          title="Keeps it tentative and sends your reason back as a research instruction: the orchestrator should design the study that supplies the missing evidence.">needs evidence</button>
+        <button class="btn" data-review="rejected" data-syn="${esc(s.synthesis_id)}"
+          title="Rejects the account. Your reason tells the orchestrator what was wrong so it can record a corrected synthesis that supersedes this one.">reject</button></div>
+    </article>`}).join('');
+  syn.forEach(s=>prose(host.querySelector('[data-md="'+s.synthesis_id+'"]'),stripLeadingHeading(s.body_md)));
+  host.querySelectorAll('[data-review]').forEach(el=>el.onclick=e=>{e.stopPropagation();reviewSynthesis(el.dataset.syn,el.dataset.review)});
+}
+async function reviewSynthesis(id,verdict){
+  const question=verdict==='accepted'?'Why should this become accepted current understanding?'
+    :verdict==='needs_evidence'?'What evidence is still needed?':'Why should this synthesis be rejected?';
+  const note=prompt(question,'');if(note===null)return;
+  const r=await fetch('/api/syntheses/'+encodeURIComponent(id)+'/reviews',{method:'POST',
+    headers:{'content-type':'application/json'},body:JSON.stringify({verdict,noteMarkdown:note})});
+  if(!r.ok){const e=await r.json().catch(()=>({error:'review failed'}));alert(e.error||'review failed');return}
+  invalidate('understanding');await load();
+}
+
+/* --- components: a graph, because threads relate to each other --- */
+function components(){
+  const comps=arr(S.components),svg=$('#graph'),rels=arr(S.componentRelations);
+  $('#graph-note').textContent=comps.length?comps.length+' threads · '+rels.length+' relationships':'no components yet';
+  $('#graph-empty').innerHTML=comps.length?''
+    :'<div class="pad t-small">No component yet. A component is an optional named research thread that accumulates its own understanding across findings; the orchestrator creates one when a thread earns it.</div>';
+  const nodes=[{component_id:'__general',title:'Direction level'},...comps];
+  const boxW=250,boxH=52,gapX=70,gapY=26;
+  const cols=nodes.length<=3?1:2,rows=Math.ceil(nodes.length/cols);
+  const width=cols*boxW+(cols-1)*gapX,height=rows*(boxH+gapY)+gapY;
+  const pos=new Map();
+  nodes.forEach((n,i)=>{const col=i%cols,row=Math.floor(i/cols);
+    pos.set(n.component_id,{x:col*(boxW+gapX),y:row*(boxH+gapY)+gapY/2,w:boxW,h:boxH})});
+  svg.setAttribute('viewBox','0 0 '+width+' '+height);
+  svg.style.height=Math.min(460,height+16)+'px';
+  let html='<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">'
+    +'<path d="M0,0 L10,5 L0,10 z" fill="#2a3846"/></marker></defs>';
+  rels.forEach(e=>{
+    const a=pos.get(e.from_component_id),b=pos.get(e.to_component_id);if(!a||!b)return;
+    const ax=a.x+a.w/2,ay=a.y+a.h/2,bx=b.x+b.w/2,by=b.y+b.h/2;
+    html+=`<path class="edge" d="M${ax},${ay} C${(ax+bx)/2},${ay} ${(ax+bx)/2},${by} ${bx},${by}"/>`;
+    html+=`<text class="edge-label" x="${(ax+bx)/2}" y="${(ay+by)/2-6}" text-anchor="middle">${esc(String(e.relationship_md||'').split(/\r?\n/)[0].slice(0,28))}</text>`;
+  });
+  nodes.forEach(n=>{const p=pos.get(n.component_id);
+    const ts=arr(S.tasks).filter(t=>(t.component_id||'__general')===n.component_id).length;
+    const sy=arr(S.syntheses).filter(s=>arr(s.componentIds).length?arr(s.componentIds).includes(n.component_id)
+      :(s.component_id||'__general')===n.component_id).length;
+    const label=String(n.title).length>30?String(n.title).slice(0,29)+'…':String(n.title);
+    html+=`<g class="node ${component===n.component_id?'active':''}" data-comp="${esc(n.component_id)}">
+      <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="9"/>
+      <text x="${p.x+14}" y="${p.y+22}">${esc(label)}</text>
+      <text class="sub" x="${p.x+14}" y="${p.y+39}">${sy} syntheses · ${ts} tasks</text></g>`});
+  svg.innerHTML=html;
+  svg.querySelectorAll('[data-comp]').forEach(el=>el.onclick=()=>{
+    component=el.dataset.comp;invalidate('components');invalidate('understanding');invalidate('tasks');invalidate('roll');paint()});
+  componentDetail();
+}
+function componentDetail(){
+  const host=$('#comp-detail'),c=arr(S.components).find(x=>x.component_id===component);
+  if(component==='__all'||!c){
+    $('#comp-detail-title').textContent='Thread detail';
+    $('#comp-detail-note').textContent='select a thread';
+    host.innerHTML='<div class="empty">Select a component above to see its findings, its syntheses and the runs that produced them.</div>';return;
+  }
+  const ts=arr(S.tasks).filter(t=>t.component_id===component);
+  const syn=arr(S.syntheses).filter(scoped);
+  const runs=arr(S.execution?.lanes).filter(l=>arr(l.componentIds).includes(component)||l.componentId===component);
+  $('#comp-detail-title').textContent=c.title;
+  $('#comp-detail-note').textContent=`${syn.length} syntheses · ${ts.length} tasks · ${runs.length} runs`;
+  host.innerHTML=`<div class="prose" id="comp-desc"></div>
+    <div class="stats" style="margin-top:16px">
+      <div class="stat"><b>${ts.length}</b><span>tasks</span></div>
+      <div class="stat"><b>${syn.length}</b><span>syntheses</span></div>
+      <div class="stat"><b>${runs.length}</b><span>runs attributed</span></div>
+      <div class="stat"><b>${runs.filter(r=>r.role==='orchestrator').length}</b><span>orchestrator turns</span></div>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn primary" data-goto="understanding">view understanding</button>
+      <button class="btn" data-goto="execution">view its runs</button></div>`;
+  prose($('#comp-desc'),c.description_md||'');
+  host.querySelectorAll('[data-goto]').forEach(el=>el.onclick=()=>{view=el.dataset.goto;invalidate('roll');paint()});
+}
+
+/* --- task detail --- */
+async function openFile(taskId,path){
+  try{const r=await fetch('/api/workspace-file?task='+encodeURIComponent(taskId)+'&path='+encodeURIComponent(path),{cache:'no-store'});
+    const body=await r.json();filePreview=r.ok?body:{path,bytes:0,text:body.error||'unreadable',truncated:false};
+    invalidate('detail');paint()}
+  catch(e){filePreview={path,bytes:0,text:String(e),truncated:false};invalidate('detail');paint()}
+}
+function detailPanel(){
+  const t=task?arr(S.tasks).find(x=>x.task_id===task):null;
+  if(!t){$('#detail').innerHTML='<div class="empty">No task selected.</div>';return}
+  const o=arr(S.outcomes).find(x=>x.task_id===task);
+  const runs=arr(S.execution?.lanes).filter(x=>x.taskId===task);
+  const cmds=arr(S.commands).filter(x=>x.task_id===task);
+  const arts=arr(S.artifacts).filter(x=>x.task_id===task);
+  const ws=t.workspace;
+  $('#detail-title').textContent=String(t.brief_md).split(/\r?\n/)[0].replace(/^#+\s*/,'').slice(0,90);
+  const host=$('#detail');
+  host.innerHTML=(o?`<h3>Orchestrator verdict <span class="status ${esc(o.verdict)}">${esc(o.verdict)}</span></h3>
+      <div class="prose clip" id="d-outcome"></div>`:'')
+    +`<h3 style="margin-top:24px">Original Markdown plan</h3><div class="prose clip" id="d-brief"></div>`
+    +(ws?`<h3 style="margin-top:24px">Live evidence in the worktree</h3>
+      <div class="t-meta" style="margin-bottom:8px">${esc(ws.path)} · ${arr(ws.files).length} changed files</div>
+      ${arr(ws.files).length?`<div class="filelist">${arr(ws.files).slice(0,80).map(f=>
+        `<div class="file" data-file="${esc(f.path)}"><span style="color:inherit">${esc(f.path)}</span>
+          <span>${bytes(f.bytes)}</span><span>${ago(f.modifiedAt)}</span></div>`).join('')}</div>`
+        :'<div class="empty">Nothing written yet.</div>'}
+      ${filePreview?`<div class="t-meta" style="margin-top:12px">${esc(filePreview.path)} · ${bytes(filePreview.bytes)}${filePreview.truncated?' · truncated':''}</div>
+        <pre class="clip-sm" style="margin-top:8px">${esc(filePreview.text)}</pre>`:''}`:'')
+    +`<h3 style="margin-top:24px">Verified checks</h3>`
+    +(cmds.length?cmds.map(c=>`<div class="t-meta" style="margin-bottom:8px">
+        <span class="tag ${c.kind==='verification'?'tool_result':'tool_call'}">${esc(c.kind)}</span>
+        ${esc(c.executable)} ${esc(JSON.parse(c.args_json).join(' '))} → exit ${esc(c.exit_code)}</div>`).join('')
+      :'<div class="empty">No decisive checks recorded yet.</div>')
+    +`<h3 style="margin-top:24px">Artifacts</h3>`
+    +(arts.length?arts.map(a=>`<div class="t-meta">${esc(a.kind)} · ${esc(a.path)}</div>`).join(''):'<div class="empty">No artifacts.</div>')
+    +`<h3 style="margin-top:24px">Attempts</h3>
+      <div class="t-small" style="margin-bottom:8px">Each row is one executor conversation. Extra rows are interrupted attempts resumed in the same worktree, not a dialogue with the orchestrator.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">`
+    +(runs.map(r=>`<button class="btn" data-lane="${esc(r.id)}">${esc(r.role)} · ${esc(r.state)} · ${fmt(r.durationMs)}${r.failure?' · '+esc(String(r.failure).split(':')[0]):''}</button>`).join('')||'<span class="t-meta">none</span>')
+    +`</div>`;
+  if(o)prose(host.querySelector('#d-outcome'),o.report_md);
+  prose(host.querySelector('#d-brief'),t.brief_md);
+  host.querySelectorAll('[data-file]').forEach(el=>el.onclick=()=>openFile(task,el.dataset.file));
+  host.querySelectorAll('[data-lane]').forEach(el=>el.onclick=()=>{lane=el.dataset.lane;selSeq=null;view='execution';invalidate('roll');paint()});
+}
+
+function sources(){
+  const xs=arr(S.sources),counts={};xs.forEach(x=>counts[x.state]=(counts[x.state]||0)+1);
+  $('#source-count').textContent=Object.entries(counts).map(x=>x.join(' ')).join(' · ');
+  $('#sources').innerHTML=xs.length?xs.map(x=>
+    `<div class="row" style="cursor:default"><div class="grow">
+      <b><a href="${esc(x.canonical_url)}" target="_blank" rel="noreferrer" style="color:var(--text);text-decoration:none">${esc(x.title)}</a></b>
+      <span class="t-meta">${esc(x.provider)}</span></div>
+      <span class="status ${x.state==='relevant'?'accepted':x.state==='rejected'?'rejected':'tentative'}">${esc(x.state)}</span></div>`).join('')
+    :'<div class="empty">No sources fetched yet.</div>';
+}
+function diagnostics(){
+  const runs=arr(S.execution?.lanes),tasks=arr(S.tasks),k=S.knowledge||{};
+  const notes=arr(S.notes).filter(n=>n.role==='runtime');
+  $('#diagnostics').innerHTML=`<div class="stats">
+      <div class="stat"><b>${tasks.length}</b><span>research tasks</span></div>
+      <div class="stat ${arr(k.undigestedOutcomeIds).length?'warn':''}"><b>${arr(k.undigestedOutcomeIds).length}</b><span>undigested findings</span></div>
+      <div class="stat"><b>${arr(k.uncitedRelevantSourceIds).length}</b><span>uncited sources</span></div>
+      <div class="stat ${runs.filter(x=>x.state==='failed').length?'warn':''}"><b>${runs.filter(x=>x.state==='failed').length}</b><span>runtime failures</span></div>
+    </div>
+    <div class="t-meta" style="margin-top:12px;line-height:1.9">
+      supervisor ${S.supervisor?.running?'running · pid '+S.supervisor.pid:'stopped'}<br>
+      watcher ${S.watcher?.running?'running · pid '+S.watcher.pid:'stopped'}<br>
+      active experiments ${tasks.filter(x=>x.state==='running'||x.state==='queued').length}<br>
+      watcher backoff ${esc(k.watcherBackoffUntil||'none')}</div>
+    ${notes.length?`<details style="margin-top:12px"><summary>runtime feedback to the orchestrator (${notes.length})</summary>
+      ${notes.slice(0,5).map(n=>`<pre class="clip-sm">${esc(n.body_md)}</pre>`).join('')}</details>`:''}
+    <details style="margin-top:8px"><summary>verified environment handed to the agents</summary>
+      <pre class="clip-sm">${esc(S.environment||'unavailable')}</pre></details>`;
+}
+
+/* --- execution --- */
+function laneOrder(a,b){const rank=x=>x.state==='active'?0:1;return rank(a)-rank(b)||b.startMs-a.startMs}
+function lanes(){return arr(S.execution?.lanes)
+  .filter(l=>{
+    if(component==='__all')return true;
+    const ids=arr(l.componentIds);
+    if(ids.length)return ids.includes(component);
+    return (l.componentId||'__general')===component;
+  })
+  .filter(l=>!task||l.taskId===task)
+  .filter(l=>roleFilter==='all'||l.role===roleFilter).sort(laneOrder)}
+function rollWindowFit(ls){const now=Date.now();
+  const from=Math.min(...ls.map(l=>l.startMs)),to=Math.max(now,...ls.map(l=>l.endMs));
+  const pad=Math.max(1000,(to-from)*0.02);return{from:from-pad,to:to+pad}}
+function rollWindow(ls){const now=Date.now();
+  if(zoom!=='fit')return{from:now-zoom*60000,to:now+Math.max(2000,zoom*60000*0.02)};
+  return rollWindowFit(ls)}
+function ticks(w){const span=w.to-w.from,steps=[1e3,5e3,15e3,3e4,6e4,3e5,9e5,18e5,36e5,72e5,144e5];
+  const step=steps.find(s=>span/s<=7)||36e5*24,out=[];
+  for(let t=Math.ceil(w.from/step)*step;t<w.to;t+=step)out.push(t);return out}
+function tip(html,ev){const el=$('#tip');if(!html){el.style.display='none';return}
+  el.innerHTML=html;el.style.display='block';
+  el.style.left=Math.min(window.innerWidth-370,ev.clientX+14)+'px';el.style.top=(ev.clientY+16)+'px'}
+function rollLane(l,w){
+  const span=w.to-w.from,pct=t=>((t-w.from)/span)*100,b=l.breakdown||{},total=Math.max(1,b.total||l.durationMs);
+  const mix=[['thinking','var(--violet)'],['tool','var(--accent)'],['model','var(--info)'],['waiting','#1d2733']]
+    .map(([k,c])=>`<i style="width:${((b[k]||0)/total*100).toFixed(2)}%;background:${c}"></i>`).join('');
+  const segs=arr(l.segments).filter(s=>l.startMs+s.endMs>=w.from&&l.startMs+s.startMs<=w.to).map(s=>{
+    const a=l.startMs+s.startMs,z=l.startMs+s.endMs,left=Math.max(0,pct(a)),right=Math.min(100,pct(z));
+    return `<div class="seg ${s.isError?'err':esc(s.kind)} ${s.live?'live':''} ${selSeq===s.seq&&lane===l.id?'sel':''}"
+      data-seq="${esc(s.seq)}" data-lane="${esc(l.id)}"
+      data-tip="${esc(s.label+' · '+fmt(s.endMs-s.startMs)+' · '+clock(a)+' → '+clock(z)+(s.isError?' · error':''))}"
+      style="left:${left}%;width:${Math.max(0.25,right-left)}%"></div>`}).join('');
+  const left=Math.max(0,pct(l.startMs)),right=Math.min(100,pct(l.endMs));
+  return `<div class="lane ${lane===l.id?'active':''}" data-lane="${esc(l.id)}">
+    <div class="lane-name"><b>${esc(l.role)}</b>
+      <span class="t-micro">${fmt(l.durationMs)} · ${esc(l.state)}${b.errors?' · '+b.errors+' err':''}</span>
+      <div class="mix">${mix}</div></div>
+    <div class="track"><div class="span ${esc(l.state)}" style="left:${left}%;width:${Math.max(0.3,right-left)}%"></div>${segs}</div></div>`;
+}
+function execution(){
+  const ls=lanes();
+  $('#rollbar').innerHTML='<span class="t-micro">role</span>'
+    +['all','orchestrator','executor','watcher'].map(r=>`<button class="chip ${roleFilter===r?'active':''}" data-role="${r}">${r}</button>`).join('')
+    +'<span class="t-micro" style="margin-left:12px">window</span>'
+    +[['fit','fit'],[15,'15m'],[60,'1h'],[360,'6h']].map(([z,n])=>`<button class="chip ${zoom===z?'active':''}" data-zoom="${z}">${n}</button>`).join('')
+    +(component!=='__all'?`<span class="chip active" style="margin-left:auto">scoped to ${esc((arr(S.components).find(c=>c.component_id===component)||{}).title||'thread')}</span>`:'')
+    +(task?'<button class="chip active" data-clear="1">clear task filter</button>':'');
+  $('#rollbar').querySelectorAll('[data-role]').forEach(el=>el.onclick=()=>{roleFilter=el.dataset.role;invalidate('roll');paint()});
+  $('#rollbar').querySelectorAll('[data-zoom]').forEach(el=>el.onclick=()=>{zoom=el.dataset.zoom==='fit'?'fit':Number(el.dataset.zoom);invalidate('roll');paint()});
+  $('#rollbar').querySelectorAll('[data-clear]').forEach(el=>el.onclick=()=>{task=null;invalidate('roll');paint()});
+  if(!lane||!ls.some(x=>x.id===lane)){const rank=['executor','orchestrator','watcher'];
+    lane=(ls.filter(x=>x.state==='active').sort((a,b)=>rank.indexOf(a.role)-rank.indexOf(b.role))[0]||ls[0]||{}).id||null}
+  const roll=$('#roll'),keep=roll.scrollTop;
+  if(!ls.length){roll.innerHTML='<div class="empty">No runs in this scope.</div>';$('#roll-note').textContent='';traceView(null);return}
+  let w=rollWindow(ls);
+  let shown=ls.filter(l=>l.endMs>=w.from&&l.startMs<=w.to).slice(0,40);
+  if(!shown.length){w=rollWindowFit(ls);shown=ls.filter(l=>l.endMs>=w.from&&l.startMs<=w.to).slice(0,40)}
+  const span=w.to-w.from,now=Date.now();
+  $('#roll-note').textContent=shown.length+' of '+ls.length+' runs · '+clock(w.from)+' → '+clock(w.to);
+  roll.innerHTML='<div class="ruler"><div class="t-micro" style="padding:6px 12px">run</div><div class="ticks">'
+    +ticks(w).map(t=>`<div class="tick" style="left:${((t-w.from)/span*100).toFixed(3)}%">${clock(t)}</div>`).join('')
+    +'</div></div><div style="position:relative">'+shown.map(l=>rollLane(l,w)).join('')
+    +`<div class="nowline" style="left:calc(190px + (100% - 190px) * ${Math.max(0,Math.min(1,(now-w.from)/span)).toFixed(4)})"></div></div>`;
+  roll.scrollTop=keep;
+  roll.querySelectorAll('[data-lane]').forEach(el=>el.onclick=e=>{lane=el.dataset.lane;
+    const seg=e.target.closest('[data-seq]');selSeq=seg?Number(seg.dataset.seq):null;invalidate('roll');paint();if(seg)scrollToStep(selSeq)});
+  roll.querySelectorAll('[data-tip]').forEach(el=>{el.onmousemove=e=>tip(el.dataset.tip,e);el.onmouseleave=()=>tip(null)});
+  traceView(ls.find(x=>x.id===lane));
+}
+async function loadRun(id,total){
+  if(!id)return;const have=runDetail.get(id);
+  if(have&&have.traceTotal===total)return;if(detailPending===id)return;detailPending=id;
+  try{const r=await fetch('/api/run?id='+encodeURIComponent(id),{cache:'no-store'});
+    if(r.ok){const body=await r.json();runDetail.set(id,body);
+      const l=arr(S&&S.execution&&S.execution.lanes).find(x=>x.id===id);if(l&&lane===id)traceView(l)}}
+  catch(e){}finally{detailPending=null}
+}
+function stepMatches(s){
+  if(traceQuery&&!String(s.content??'').toLowerCase().includes(traceQuery)
+    &&!String(s.toolName??'').toLowerCase().includes(traceQuery))return false;
+  if(traceFilter==='all')return true;
+  if(traceFilter==='tools')return s.kind==='tool_call'||s.kind==='tool_result';
+  if(traceFilter==='reasoning')return s.kind==='thinking';
+  if(traceFilter==='output')return s.kind==='text';
+  if(traceFilter==='errors')return Boolean(s.isError);
+  return true;
+}
+function scrollToStep(seq){const el=document.querySelector('[data-step="'+seq+'"]');if(el)el.scrollIntoView({block:'center'})}
+function traceView(l){
+  const host=$('#trace');
+  $('#tracebar').innerHTML=['all','tools','reasoning','output','errors']
+    .map(f=>`<button class="chip ${traceFilter===f?'active':''}" data-filter="${f}">${f}</button>`).join('')
+    +`<input type="search" id="tq" placeholder="search trace" value="${esc(traceQuery)}">`
+    +`<button class="chip ${follow?'on':''}" id="followbtn">${follow?'following':'follow off'}</button>`;
+  $('#tracebar').querySelectorAll('[data-filter]').forEach(el=>el.onclick=()=>{traceFilter=el.dataset.filter;traceView(l)});
+  $('#tracebar').querySelector('#followbtn').onclick=()=>{follow=!follow;traceView(l)};
+  const q=$('#tracebar').querySelector('#tq');
+  q.oninput=()=>{traceQuery=q.value.toLowerCase();traceView(l);
+    const again=$('#tracebar').querySelector('#tq');if(again){again.focus();again.setSelectionRange(again.value.length,again.value.length)}};
+  if(!l){host.innerHTML='<div class="empty">Select a run in the piano roll.</div>';$('#trace-note').textContent='';return}
+  const hb=l.heartbeat,b=l.breakdown||{},detail=runDetail.get(l.id);loadRun(l.id,l.traceTotal);
+  $('#trace-note').textContent=l.role+' · '+l.state+' · '+(l.traceTotal||0)+' steps'
+    +(hb?' · '+(hb.phase||'')+' · observed '+ago(hb.observedAt):'')+(detail?'':' · loading');
+  const durations=new Map(arr(detail?detail.segments:l.segments).map(s=>[s.seq,s]));
+  const all=detail&&arr(detail.trace).length?detail.trace:arr(l.trace);
+  const steps=all.filter(stepMatches);
+  const keep=host.scrollTop,atBottom=host.scrollHeight-host.scrollTop-host.clientHeight<80;
+  const hadFocus=document.activeElement&&document.activeElement.id==='tq';
+  host.innerHTML='<div class="step" style="grid-template-columns:1fr"><div>'
+    +`<span class="tag thinking">reasoning ${fmt(b.thinking||0)}</span>`
+    +`<span class="tag tool_call">tools ${fmt(b.tool||0)} · ${b.toolCalls||0}</span>`
+    +`<span class="tag tool_result">model ${fmt(b.model||0)}</span>`
+    +`<span class="tag">waiting ${fmt(b.waiting||0)}</span>`
+    +(b.errors?`<span class="tag err">${b.errors} errors</span>`:'')+'</div></div>'
+    +(steps.length?steps.map(s=>{
+      const seg=durations.get(s.seq),open=expanded.has(l.id+':'+s.seq);
+      const long=String(s.content??'').length>240||s.rawContent;
+      return `<div class="step ${s.isError?'error':''} ${selSeq===s.seq?'sel':''}" data-step="${esc(s.seq)}">
+        <div class="when"><b>${fmt(s.atMs||0)}</b>${seg&&s.kind==='tool_call'?fmt(seg.endMs-seg.startMs):''}</div>
+        <div><div class="line"><span class="tag ${s.isError?'err':esc(s.kind)}">${esc(s.kind)}</span>
+          ${s.toolName?`<span class="tag">${esc(s.toolName)}</span>`:''}${esc(String(s.content??'').slice(0,240))}</div>
+          ${long?`<div><span class="chip" data-expand="${esc(s.seq)}" style="padding:2px 8px;font-size:11px">${open?'hide':'detail'}</span>`
+            +(open?`<pre>${esc(s.content)}</pre>`+(s.rawContent?`<details open><summary>Raw internal event</summary><pre>${esc(s.rawContent)}</pre></details>`:''):'')+'</div>':''}
+        </div></div>`}).join('')
+      :'<div class="empty">'+(all.length?'No steps match this filter.':'No steps recorded yet — a tool call is written to the trace once it returns.')+'</div>');
+  host.querySelectorAll('[data-expand]').forEach(el=>el.onclick=e=>{e.stopPropagation();
+    const key=l.id+':'+el.dataset.expand;expanded.has(key)?expanded.delete(key):expanded.add(key);traceView(l)});
+  host.querySelectorAll('[data-step]').forEach(el=>el.onclick=()=>{selSeq=Number(el.dataset.step);invalidate('roll');paint()});
+  host.scrollTop=(follow&&atBottom)?host.scrollHeight:keep;
+  if(hadFocus){const box=$('#tracebar').querySelector('#tq');if(box){box.focus();box.setSelectionRange(box.value.length,box.value.length)}}
+}
+
+/* --- paint: signatures keep a poll from destroying what you are reading --- */
+function sig(parts){return JSON.stringify(parts)}
+function paint(){
+  if(!S||S.empty)return;
+  $('#title').textContent=S.direction.title;
+  $('#subtitle').textContent=S.direction.direction_id;
+  headStats();
+  navBar();
+  const lanesSig=arr(S.execution?.lanes).map(l=>l.id+':'+l.state+':'+(l.traceTotal||0)+':'+Math.round(l.durationMs/2000)).join(',');
+  ifChanged('now',sig([lanesSig,S.direction.status]),nowPanel);
+  ifChanged('pipeline',sig([lanesSig,S.supervisor?.running,S.watcher?.running]),pipeline);
+  ifChanged('tasks',sig([arr(S.tasks).map(t=>t.task_id+t.state).join(','),arr(S.outcomes).length,component,task]),tasksPanel);
+  ifChanged('understanding',sig([arr(S.syntheses).map(x=>x.synthesis_id+(x.status||'')).join(','),component]),understanding);
+  ifChanged('components',sig([arr(S.components).map(c=>c.component_id).join(','),arr(S.componentRelations).length,component,arr(S.syntheses).length]),components);
+  ifChanged('detail',sig([task,arr(S.outcomes).length,filePreview&&filePreview.path,arr(S.commands).length]),detailPanel);
+  ifChanged('sources',sig([arr(S.sources).map(x=>x.source_id+x.state).join(',')]),sources);
+  ifChanged('diagnostics',sig([arr(S.notes).length,S.supervisor?.running,S.watcher?.running,arr(S.tasks).length]),diagnostics);
+  ifChanged('roll',sig([lanesSig,component,task,roleFilter,zoom,lane,selSeq]),execution);
+}
+$('#pause').onclick=()=>{live=!live;$('#pause').textContent=live?'live':'paused';$('#pause').className='chip '+(live?'on':'')};
+$('#detail-close').onclick=()=>{view='overview';paint()};
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;
+  if(e.key==='f'){follow=!follow;invalidate('roll');paint()}
+  if(e.key==='Escape'){view='overview';paint()}
+  if(e.key===' '){e.preventDefault();$('#pause').click()}});
+async function load(){try{const r=await fetch('/api/state',{cache:'no-store'});S=await r.json();paint()}catch(e){}}
+const fromHash=location.hash.slice(1);
+if(['overview','understanding','components','execution','sources','diagnostics'].includes(fromHash))view=fromHash;
+window.addEventListener('hashchange',()=>{const v=location.hash.slice(1);if(v){view=v;paint()}});
+load();setInterval(()=>{if(live)load()},3000);
+</script></body></html>

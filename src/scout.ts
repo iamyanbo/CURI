@@ -58,7 +58,7 @@ export interface Lead {
   abstract: string;
   published: string;
   /** What kind of thing this is, for `sources.source_class`. */
-  sourceClass: "preprint" | "repository" | "discussion" | "release";
+  sourceClass: "preprint" | "repository" | "discussion" | "release" | "article" | "feed";
 }
 
 /**
@@ -237,6 +237,12 @@ export function recordLeads(store: Store, campaignId: string, provider: string, 
   let added = 0;
   for (const lead of leads) {
     const hash = sha256(`${lead.title}\n${lead.abstract}`);
+    // sources.source_id is a global primary key, so it has to be scoped by
+    // campaign as well as by content. Two campaigns scouting overlapping
+    // topics both pass the per-campaign duplicate check above and then
+    // collided on the same content-only id, which failed every arXiv sweep
+    // of the second campaign.
+    const sourceId = `S-${sha256([campaignId, lead.url, hash].join("|")).slice(0, 12)}`;
     const exists = store.db.prepare(
       "SELECT 1 FROM sources WHERE campaign_id=? AND canonical_url=? AND content_hash=?",
     ).get(campaignId, lead.url, hash);
@@ -249,7 +255,7 @@ export function recordLeads(store: Store, campaignId: string, provider: string, 
             content_hash, raw_artifact_id, source_class, reliability, metadata_json)
          VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
-        `S-${hash.slice(0, 12)}`, campaignId, provider, lead.url, lead.title, nowIso(),
+        sourceId, campaignId, provider, lead.url, lead.title, nowIso(),
         hash, null, lead.sourceClass, "lead",
         JSON.stringify({ abstract: lead.abstract, published: lead.published }),
       );
@@ -279,11 +285,44 @@ async function sweep(store: Store, topic: string): Promise<void> {
   }
 }
 
+/**
+ * States in which a campaign can still receive literature. A campaign that has
+ * stopped, completed or failed is finished with, and one that was never created
+ * cannot be scouted for at all.
+ */
+const SCOUTABLE_STATUSES = new Set(["draft", "ready", "running", "paused"]);
+
+/**
+ * The scout runs beside a campaign rather than inside it, so before this check
+ * nothing ended it when the campaign did. Orphans outlived their campaigns by
+ * days, kept writing leads nobody would read, and — because they hold their
+ * code in memory for as long as they run — kept executing whatever revision
+ * they happened to start with. Re-reading the status each sweep binds the
+ * process lifetime to the campaign's own lifecycle.
+ */
+export function scoutableStatus(store: Store, campaignId: string): string | null {
+  const row = store.db.prepare(
+    "SELECT status FROM campaigns WHERE campaign_id=?",
+  ).get(campaignId) as { status: string } | undefined;
+  if (!row) return null;
+  return SCOUTABLE_STATUSES.has(row.status) ? row.status : null;
+}
+
 async function main(): Promise<void> {
   // A plain topic. Each provider translates it into its own query syntax.
   const query = argOf("query") ?? argOf("topic") ?? "CUDA softmax kernel optimization";
   if (!existsSync(STATE_DIR)) mkdirSync(STATE_DIR, { recursive: true });
   const store = Store.open(join(STATE_DIR, "state.sqlite"));
+
+  const stop = (reason: string): void => {
+    console.log(`[${nowIso()}] campaign ${CAMPAIGN} ${reason}; scout exiting`);
+    store.close();
+    process.exit(0);
+  };
+
+  if (scoutableStatus(store, CAMPAIGN) === null) {
+    stop("is not accepting literature");
+  }
 
   console.log(`literature scout on ${CAMPAIGN}`);
   console.log(`topic : ${query}`);
@@ -293,7 +332,12 @@ async function main(): Promise<void> {
   await sweep(store, query);
   if (has("once")) { store.close(); return; }
 
-  setInterval(() => { void sweep(store, query); }, EVERY_MS);
+  setInterval(() => {
+    // Checked every sweep, not only at startup: a campaign stops long after
+    // its scout began, and that is exactly the case that used to leak.
+    if (scoutableStatus(store, CAMPAIGN) === null) stop("is no longer accepting literature");
+    void sweep(store, query);
+  }, EVERY_MS);
 }
 
 if (process.argv[1]?.endsWith("scout.ts") || process.argv[1]?.endsWith("scout.js")) {

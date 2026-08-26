@@ -6,5 +6,17 @@ infra/terraform.tfvars
 __pycache__/
 *.pyc
 .autoresearch/
+.autoresearch-legacy/
 domains/tinyml/candidate/out/
 domains/tinyml/data/*.bin
+
+# Local credentials only. Cloud deployments get configuration from the
+# service environment or Secret Manager, never from a file in the image.
+.env
+.env.*
+!.env.example
+
+# Scratch, build output and local tooling: never part of the project.
+tmp/
+pi-extension/
+.autoresearch-legacy-remnants-*/

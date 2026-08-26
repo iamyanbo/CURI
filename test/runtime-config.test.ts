@@ -6,8 +6,8 @@ import { runtimeConfig } from "../src/config/runtime.js";
 describe("runtime profiles", () => {
   it("defaults to a locally executable profile", () => {
     assert.deepEqual(runtimeConfig([], {} as NodeJS.ProcessEnv), {
-      profile: "local", modelProvider: "gemini-api", compute: "local", store: "sqlite",
-      region: "us-central1", maxCostUsd: 20,
+      profile: "local", modelProvider: "openrouter", compute: "local", store: "sqlite",
+      region: "us-central1", maxCostUsd: 0,
     });
   });
 

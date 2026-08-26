@@ -1,0 +1,20 @@
+# Only the mirror is deployed. The research runtime, its local state, its
+# worktrees and every credential stay on the operator's machine.
+.git/
+.env
+.env.*
+node_modules/
+.autoresearch/
+.autoresearch-legacy/
+.autoresearch-legacy-remnants-*/
+.autoresearch-protected/
+tmp/
+domains/
+docs/
+test/
+infra/
+prompts/
+dist/
+*.sqlite
+*.sqlite-*
+*.bak

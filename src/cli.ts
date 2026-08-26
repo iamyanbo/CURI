@@ -2,7 +2,7 @@
  * autoresearch CLI. Foreground driver for v0 (the daemon arrives on day 4).
  *
  *   tsx src/cli.ts init
- *   tsx src/cli.ts cycle [--cycles N] [--manager-model M] [--executor-model M] [--keep-worktree]
+ *   tsx src/cli.ts cycle [--cycles N] [--architect-model M] [--manager-model M] [--executor-model M]
  *   tsx src/cli.ts status
  *   tsx src/cli.ts verify
  */
@@ -21,14 +21,26 @@ import { createTinymlAdapter } from "./domain/tinyml-adapter.js";
 import { createGenericAdapter, loadDomainConfig } from "./domain/generic-adapter.js";
 import { DEFAULT_LANE_SHARES } from "./loop/portfolio.js";
 import { latestCampaignId, normaliseCampaignConfig, nowIso, Store } from "./store/store.js";
-import { clearSteer, requestSteer } from "./steer.js";
+import {
+  clearSteer, requestAttentionSteer, requestSteer, withdrawAttentionSteers,
+  type AttentionSteerScope,
+} from "./steer.js";
 import { formatDuration, IntervalRecorder } from "./trace/intervals.js";
+import { loadEnvFile } from "./config/env-file.js";
 import { configureRuntime } from "./config/runtime.js";
 import { assertCampaignRuntime, runtimeDoctor } from "./config/doctor.js";
 import { CloudRunDispatcher } from "./cloud/cloud-run-dispatcher.js";
 import { CLOUD_TASK_VERSION, type CloudEvaluationTask } from "./cloud/evaluation-task.js";
 import { runDoctor as runDomainDoctor } from "./doctor.js";
+import { GlobalMemoryStore } from "./memory/store.js";
+import { searchCampaignMemory } from "./memory/campaign-memory.js";
+import { configureWatcher, readWatcherSubscription, sweepWatcher, watcherSourceBacklog } from "./watcher/service.js";
+import { enrichWatcherSources } from "./watcher/enrichment.js";
+import { inspectWatcher, requestWatcherStop, startWatcher } from "./watcher/control.js";
+import { handleResearchCommand } from "./research/commands.js";
 
+// Credentials must be in the environment before any provider is resolved.
+loadEnvFile(process.cwd());
 const RUNTIME = configureRuntime();
 
 const PROJECT_ROOT = resolve(process.cwd());
@@ -62,6 +74,18 @@ function arg(name: string, fallback?: string): string | undefined {
 }
 function flag(name: string): boolean {
   return process.argv.includes(`--${name}`);
+}
+function argsOf(name: string): string[] {
+  const values: string[] = [];
+  for (let i = 0; i < process.argv.length - 1; i++) {
+    if (process.argv[i] === `--${name}`) values.push(process.argv[i + 1]!);
+  }
+  return values;
+}
+
+function ensureManagedWatcher(): { pid: number; logPath: string; alreadyRunning: boolean } {
+  const entry = fileURLToPath(new URL("./watcher.ts", import.meta.url));
+  return startWatcher(STATE_DIR, CAMPAIGN_ID, entry, PROJECT_ROOT);
 }
 
 function openStore(): Store {
@@ -166,10 +190,8 @@ function syncBaseRevision(store: Store): void {
 }
 
 /**
- * Run an unattended campaign under hard ceilings.
- *
- * The model worker prices every response from token usage. The default $20
- * software ceiling sits below the separate $25 cloud billing alert.
+ * Run an unattended campaign. Time, cycle, and cost ceilings are optional;
+ * local defaults observe usage without stopping productive work.
  */
 
 async function cmdCampaign(): Promise<void> {
@@ -192,14 +214,34 @@ async function cmdCampaign(): Promise<void> {
   const store = openStore();
   ensureCampaign(store);
   syncBaseRevision(store);
+  // Prevent a campaign-scoped watcher from observing a stale terminal status
+  // during the small gap before runCampaign establishes ownership.
+  store.db.prepare("UPDATE campaigns SET status='running', stop_reason=NULL WHERE campaign_id=?")
+    .run(CAMPAIGN_ID);
+
+  if (flag("watch")) {
+    configureWatcher(store, CAMPAIGN_ID, {
+      enabled: true, intervalSeconds: Number(arg("watch-every", "3600")),
+      topics: argsOf("watch-topic"), feeds: argsOf("watch-feed"),
+      maxResultsPerQuery: Number(arg("watch-max", "50")),
+      overlapHours: Number(arg("watch-overlap-hours", "72")),
+      lifetime: "campaign",
+    });
+  }
+  const watchEnabled = Boolean(readWatcherSubscription(store, CAMPAIGN_ID));
+  if (watchEnabled) {
+    const watcher = ensureManagedWatcher();
+    console.log(`watcher ${watcher.alreadyRunning ? "already running" : "started"} · pid ${watcher.pid}`);
+    console.log(`watch log: ${watcher.logPath}`);
+  }
 
   // 0 means run until stopped. Every other ceiling still applies, and the
   // operator stop is honoured at each cycle boundary.
-  const hours = Number(arg("hours", "5"));
+  const hours = Number(arg("hours", "0"));
   const budget = {
     wallMs: hours * 3_600_000,
     costUsd: RUNTIME.maxCostUsd,
-    maxCycles: Number(arg("max-cycles", "120")),
+    maxCycles: Number(arg("max-cycles", "0")),
     parameterQuota: Number(arg("parameter-quota", "0.20")),
     repairCap: Number(arg("repair-cap", "3")),
   };
@@ -208,8 +250,9 @@ async function cmdCampaign(): Promise<void> {
     claimOwnership(STATE_DIR, "(detached)", process.argv.slice(2));
   }
 
-  console.log(`campaign start: ${hours}h ceiling, $${budget.costUsd} cost cap, ` +
-              `${budget.maxCycles} cycle cap, repair cap ${budget.repairCap}`);
+  console.log(`campaign start: ${hours > 0 ? `${hours}h ceiling` : "no time ceiling"}, ` +
+              `${budget.costUsd > 0 ? `$${budget.costUsd} cost cap` : "cost observed, no cap"}, ` +
+              `${budget.maxCycles > 0 ? `${budget.maxCycles} cycle cap` : "no cycle cap"}, repair cap ${budget.repairCap}`);
   console.log(`started at ${nowIso()}`);
 
   const summary = await runCampaign(store, {
@@ -219,17 +262,22 @@ async function cmdCampaign(): Promise<void> {
       projectRoot: PROJECT_ROOT,
       harness: makeHarness(),
       campaignId: CAMPAIGN_ID,
+      architectModel: arg("architect-model"),
       managerModel: arg("manager-model"),
       executorModel: arg("executor-model"),
-      managerTimeoutMs: 300_000,
-      executorTimeoutMs: 900_000,
-      experimentTimeoutMs: 900_000,
-      evaluatorTimeoutMs: 600_000,
+      architectTimeoutMs: 0,
+      managerTimeoutMs: 0,
+      executorTimeoutMs: 0,
+      experimentTimeoutMs: 0,
+      evaluatorTimeoutMs: 0,
       baselinePrimary: currentBaselineBpc(store),
       baselineSecondary: currentBaselineHoldoutBpc(store),
       keepWorktree: false,
       stateDir: STATE_DIR,
     },
+    onCycle: watchEnabled ? () => {
+      if (readWatcherSubscription(store, CAMPAIGN_ID)) ensureManagedWatcher();
+    } : undefined,
   });
 
   console.log(`\ncycles ${summary.cycles} · ${formatDuration(summary.wallMs)} · $${summary.costUsd.toFixed(4)}`);
@@ -237,6 +285,9 @@ async function cmdCampaign(): Promise<void> {
   console.log(`
 ${renderClaimCard(store, CAMPAIGN_ID)}`);
   clearRunFile(STATE_DIR);
+  if (watchEnabled) {
+    console.log("watcher remains active; stop it explicitly with `cli.ts watch stop`");
+  }
   store.close();
 }
 
@@ -275,8 +326,8 @@ async function cmdCloudEvaluate(): Promise<void> {
     baselinePrimary: currentBaselineBpc(store),
     baselineSecondary: currentBaselineHoldoutBpc(store),
     supportDelta,
-    experimentTimeoutMs: Number(argOf("experiment-timeout-ms") ?? 600_000),
-    evaluatorTimeoutMs: Number(argOf("evaluator-timeout-ms") ?? 600_000),
+    experimentTimeoutMs: Number(argOf("experiment-timeout-ms") ?? 0),
+    evaluatorTimeoutMs: Number(argOf("evaluator-timeout-ms") ?? 0),
   }));
   store.close();
   const dispatcher = new CloudRunDispatcher({ projectId, region: RUNTIME.region, jobName, bucket });
@@ -305,15 +356,21 @@ async function cmdDomainDoctor(): Promise<void> {
 /** Ask a detached campaign to stop at the next cycle boundary. */
 function cmdStop(): void {
   const live = inspect(STATE_DIR);
-  if (live.state === "none") { console.log("no campaign is running"); return; }
+  if (live.state === "none") {
+    console.log("no campaign is running");
+    console.log("the independent watcher is unchanged; use `cli.ts watch stop` to disable it");
+    return;
+  }
   if (live.state === "stale") {
     console.log(`no campaign is running (${live.reason}); clearing the stale run file`);
     clearRunFile(STATE_DIR);
+    console.log("the independent watcher is unchanged; use `cli.ts watch stop` to disable it");
     return;
   }
   requestStop(STATE_DIR, arg("reason", "operator requested stop")!);
   console.log(`stop requested · pid ${live.run.pid} will finish its current cycle and exit`);
   console.log(`a cycle can take several minutes; watch ${live.run.logPath}`);
+  console.log("the independent watcher remains active; use `cli.ts watch stop` to disable it");
 }
 
 async function cmdCycle(): Promise<void> {
@@ -329,18 +386,20 @@ async function cmdCycle(): Promise<void> {
       projectRoot: PROJECT_ROOT,
       harness: makeHarness(),
       campaignId: CAMPAIGN_ID,
+      architectModel: arg("architect-model"),
       managerModel: arg("manager-model"),
       executorModel: arg("executor-model"),
-      managerTimeoutMs: 300_000,
-      executorTimeoutMs: 900_000,
-      experimentTimeoutMs: 900_000,
-      evaluatorTimeoutMs: 600_000,
+      architectTimeoutMs: 0,
+      managerTimeoutMs: 0,
+      executorTimeoutMs: 0,
+      experimentTimeoutMs: 0,
+      evaluatorTimeoutMs: 0,
       baselinePrimary: currentBaselineBpc(store),
       baselineSecondary: currentBaselineHoldoutBpc(store),
       keepWorktree: flag("keep-worktree"),
     });
 
-    const cost = result.usage.manager.costUsd + result.usage.executor.costUsd;
+    const cost = result.usage.architect.costUsd + result.usage.manager.costUsd + result.usage.executor.costUsd;
     console.log(`status        : ${result.status}`);
     if (result.verdict) console.log(`why           : ${result.verdict.explanation}`);
     if (result.abortReason) console.log(`abort         : ${result.abortReason}`);
@@ -355,7 +414,7 @@ async function cmdCycle(): Promise<void> {
         `${result.classMismatch ? "  <-- MISMATCH, charged to actual" : ""}`,
       );
     }
-    console.log(`cost          : $${cost.toFixed(4)}  (${result.usage.manager.totalTokens + result.usage.executor.totalTokens} tokens)`);
+    console.log(`cost          : $${cost.toFixed(4)}  (${result.usage.architect.totalTokens + result.usage.manager.totalTokens + result.usage.executor.totalTokens} tokens)`);
     console.log(`duration      : ${formatDuration(result.durationMs)}`);
   }
   store.close();
@@ -384,6 +443,11 @@ function cmdStatus(): void {
       : "not running";
   console.log(`CAMPAIGN  ${c.campaign_id}   STATUS  ${c.status}   PROCESS  ${liveness}`);
   if (live.state === "running") console.log(`LOG       ${live.run.logPath}`);
+  const watcher = inspectWatcher(STATE_DIR, CAMPAIGN_ID);
+  const watcherState = watcher.state === "running" ? `RUNNING (pid ${watcher.run.pid})`
+    : watcher.state === "stale" ? `NOT RUNNING — ${watcher.reason}` : "disabled/not running";
+  console.log(`WATCHER   ${watcherState}`);
+  if (watcher.state === "running") console.log(`WATCHLOG  ${watcher.run.logPath}`);
   console.log(`SPAN      ${formatDuration(d.spanMs)}`);
   for (const [cat, ms] of Object.entries(d.byCategory).sort((a, b) => b[1] - a[1])) {
     const pct = d.spanMs > 0 ? ((ms / d.spanMs) * 100).toFixed(1) : "0.0";
@@ -502,21 +566,138 @@ function cmdAdvance(): void {
  * finding.
  */
 function cmdSteer(): void {
+  const scope = (argOf("scope") ?? "micro") as AttentionSteerScope;
+  if (!["micro", "macro", "watcher", "all"].includes(scope)) {
+    throw new Error("steer --scope must be micro, macro, watcher, or all");
+  }
   if (flag("clear")) {
-    clearSteer(STATE_DIR);
-    console.log("pending steer withdrawn");
+    if (scope === "micro" || scope === "all") clearSteer(STATE_DIR);
+    const store = openStore();
+    const changes = withdrawAttentionSteers(store, CAMPAIGN_ID, scope);
+    store.close();
+    console.log(`${changes} pending ${scope} steer(s) withdrawn`);
     return;
   }
-  const text = process.argv.slice(3).filter((a) => !a.startsWith("--")).join(" ").trim();
+  const operands: string[] = [];
+  for (let i = 3; i < process.argv.length; i++) {
+    if (process.argv[i] === "--scope") { i++; continue; }
+    if (!process.argv[i]!.startsWith("--")) operands.push(process.argv[i]!);
+  }
+  const text = operands.join(" ").trim();
   if (!text) {
-    console.log('usage: cli.ts steer "what the manager should consider next"');
+    console.log('usage: cli.ts steer "what to investigate" [--scope micro|macro|watcher|all]');
     console.log("       cli.ts steer --clear     (withdraw a pending steer)");
     return;
   }
-  requestSteer(STATE_DIR, text);
-  console.log("steer queued; the manager sees it at the next cycle boundary:");
+  if (scope === "micro" || scope === "all") requestSteer(STATE_DIR, text);
+  const store = openStore();
+  ensureCampaign(store);
+  requestAttentionSteer(store, CAMPAIGN_ID, scope, text);
+  store.close();
+  console.log(`steer queued for ${scope}; it is applied at a safe cycle boundary:`);
   console.log(`  "${text}"`);
   console.log("recorded as a human intervention; it cannot change any threshold");
+}
+
+async function cmdWatcher(): Promise<void> {
+  const action = process.argv[3] ?? "status";
+  if (action === "status") {
+    const live = inspectWatcher(STATE_DIR, CAMPAIGN_ID);
+    const store = openStore();
+    const subscription = store.db.prepare(
+      "SELECT * FROM watcher_subscriptions WHERE campaign_id=?",
+    ).get(CAMPAIGN_ID) ?? null;
+    const cursors = store.db.prepare(
+      `SELECT provider, query_text, last_success_at, last_error, next_retry_at
+       FROM watcher_cursors WHERE campaign_id=? ORDER BY provider, query_text`,
+    ).all(CAMPAIGN_ID);
+    const ideas = store.db.prepare(
+      "SELECT state, COUNT(*) AS count FROM idea_cards WHERE campaign_id=? GROUP BY state",
+    ).all(CAMPAIGN_ID);
+    store.close();
+    let enrichment: unknown = null;
+    const memory = GlobalMemoryStore.open();
+    try {
+      enrichment = memory.db.prepare(
+        "SELECT status, COUNT(*) AS count FROM source_enrichments GROUP BY status",
+      ).all();
+    } finally { memory.close(); }
+    console.log(JSON.stringify({ live, subscription, cursors, ideas, enrichment }, null, 2));
+    return;
+  }
+  if (action === "stop") {
+    const store = openStore();
+    store.db.prepare("UPDATE watcher_subscriptions SET enabled=0, updated_at=? WHERE campaign_id=?")
+      .run(nowIso(), CAMPAIGN_ID);
+    store.close();
+    requestWatcherStop(STATE_DIR, CAMPAIGN_ID, arg("reason", "operator stopped watcher")!);
+    console.log("watcher stop requested");
+    return;
+  }
+  const store = openStore();
+  ensureCampaign(store);
+  const subscription = configureWatcher(store, CAMPAIGN_ID, {
+    enabled: true, intervalSeconds: Number(arg("watch-every", "3600")),
+    topics: argsOf("watch-topic"), feeds: argsOf("watch-feed"),
+    maxResultsPerQuery: Number(arg("watch-max", "50")),
+    overlapHours: Number(arg("watch-overlap-hours", "72")),
+    lifetime: argOf("watch-lifetime") === "campaign" ? "campaign" : "persistent",
+  });
+  if (action === "start") {
+    const watcher = ensureManagedWatcher();
+    console.log(`watcher ${watcher.alreadyRunning ? "already running" : "started"} · pid ${watcher.pid}`);
+    console.log(`log: ${watcher.logPath}`);
+    store.close();
+    return;
+  }
+  if (action === "sweep") {
+    const memory = GlobalMemoryStore.open();
+    const result = await sweepWatcher(store, memory, subscription);
+    const enrichment = await enrichWatcherSources(store, memory, {
+      campaignId: CAMPAIGN_ID, projectRoot: PROJECT_ROOT,
+      sourceVersionIds: watcherSourceBacklog(store, CAMPAIGN_ID, result.sourceVersionIds),
+    });
+    console.log(JSON.stringify({ ...result, enrichment }, null, 2));
+    memory.close();
+    store.close();
+    return;
+  }
+  store.close();
+  throw new Error("watch action must be start, stop, status, or sweep");
+}
+
+function cmdMemory(): void {
+  const action = process.argv[3] ?? "search";
+  const memory = GlobalMemoryStore.open();
+  if (action === "rebuild") {
+    memory.rebuildFts();
+    console.log("memory full-text index rebuilt");
+    memory.close();
+    return;
+  }
+  if (action !== "search") {
+    memory.close();
+    throw new Error("memory action must be search or rebuild");
+  }
+  const operands: string[] = [];
+  for (let i = 4; i < process.argv.length; i++) {
+    if (["--limit", "--offset"].includes(process.argv[i]!)) { i++; continue; }
+    if (!process.argv[i]!.startsWith("--")) operands.push(process.argv[i]!);
+  }
+  const query = operands.join(" ").trim();
+  if (!query) {
+    memory.close();
+    throw new Error("memory search requires a query");
+  }
+  const store = openStore();
+  ensureCampaign(store);
+  const found = searchCampaignMemory(store, memory, {
+    campaignId: CAMPAIGN_ID, query, role: "human", asOf: makeHarness().domain.leadsAsOf ?? null,
+    limit: Number(arg("limit", "20")), offset: Number(arg("offset", "0")),
+  });
+  console.log(JSON.stringify(found, null, 2));
+  store.close();
+  memory.close();
 }
 
 function cmdEvaluatorChange(): void {
@@ -555,6 +736,7 @@ function cmdVerify(): void {
 
 const cmd = process.argv[2];
 switch (cmd) {
+  case "research": await handleResearchCommand(PROJECT_ROOT, process.argv.slice(3)); break;
   case "init": openStore().close(); console.log(`initialised ${DB_PATH}`); break;
   case "cycle": await cmdCycle(); break;
   case "campaign": await cmdCampaign(); break;
@@ -562,6 +744,8 @@ switch (cmd) {
   case "advance": { cmdAdvance(); break; }
   case "stop": cmdStop(); break;
   case "steer": cmdSteer(); break;
+  case "watch": await cmdWatcher(); break;
+  case "memory": cmdMemory(); break;
   case "evaluator-change": cmdEvaluatorChange(); break;
   case "card": {
     const s2 = openStore();
@@ -577,13 +761,20 @@ switch (cmd) {
     console.log([
       "usage:",
       "  cli.ts init",
-      "  cli.ts cycle    [--cycles N] [--manager-model M] [--executor-model M] [--keep-worktree]",
+      "  cli.ts cycle    [--cycles N] [--architect-model M] [--manager-model M] [--executor-model M] [--keep-worktree]",
       "  cli.ts campaign [--detach] [--domain path/to/domain.json] [--hours 5] [--max-cost 5] [--max-cycles 120] [--repair-cap 3]",
-      "                  [--parameter-quota 0.20] [--manager-model M] [--executor-model M]",
-      "  profiles        [--profile local|cloud] [--model-provider gemini-api|vertex-ai]",
+      "                  [--parameter-quota 0.20] [--architect-model M] [--manager-model M] [--executor-model M]",
+      "                  [--watch] [--watch-every 3600] [--watch-topic TEXT] [--watch-feed URL]",
+      "                  [--watch-max 50] [--watch-overlap-hours 72]",
+      "  profiles        [--profile local|cloud] [--model-provider openrouter|gemini-api|vertex-ai]",
       "                  [--compute local|cloud-run] [--store sqlite|firestore]",
       "  cli.ts stop [--reason \"...\"]",
-      "  cli.ts steer \"try shared-memory staging next\"   (applied at the next cycle boundary)",
+      "  cli.ts steer \"try shared-memory staging next\" [--scope micro|macro|watcher|all]",
+      "  cli.ts watch start|stop|status|sweep [--watch-topic TEXT] [--watch-feed URL]",
+      "               [--watch-every 3600] [--watch-max 50] [--watch-overlap-hours 72]",
+      "               [--watch-lifetime persistent|campaign]",
+      "  cli.ts memory search \"query\" [--limit 20] [--offset 0]",
+      "  cli.ts memory rebuild",
       "  cli.ts evaluator-change --reason \"...\"   (run after editing .autoresearch-protected/)",
       "  cli.ts status",
       "  cli.ts card",

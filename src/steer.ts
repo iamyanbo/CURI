@@ -19,6 +19,7 @@
  * mid-campaign, every result after that point would be unfalsifiable.
  */
 
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -27,6 +28,68 @@ import { nowIso, type Store } from "./store/store.js";
 export interface Steer {
   text: string;
   at: string;
+}
+
+export type AttentionSteerScope = "micro" | "macro" | "watcher" | "all";
+
+/**
+ * Queue durable macro/watcher guidance and record the operator input now.
+ * Unlike the one-cycle micro steer file, this survives restarts and is visible
+ * to the architect until it has reviewed the guidance at a safe boundary.
+ */
+export function requestAttentionSteer(
+  store: Store, campaignId: string, scope: AttentionSteerScope, text: string,
+): { steerId: string; text: string } {
+  const clipped = text.trim().slice(0, 4000);
+  if (!clipped) throw new Error("a steer needs some text");
+  const steerId = `STEER-${randomUUID()}`;
+  const at = nowIso();
+  store.transact((s) => {
+    s.db.prepare(
+      `INSERT INTO attention_steers(steer_id, campaign_id, scope, text, created_at)
+       VALUES (?,?,?,?,?)`,
+    ).run(steerId, campaignId, scope, clipped, at);
+    s.db.prepare(
+      `INSERT INTO human_interventions
+         (intervention_id, campaign_id, kind, changed_frontier, detail, occurred_at)
+       VALUES (?,?,?,?,?,?)`,
+    ).run(`I-${randomUUID()}`, campaignId, "hint", 1,
+      `operator ${scope} steer: ${clipped.slice(0, 900)}`, at);
+    s.appendEvent({
+      campaignId, aggregateKind: "steer", aggregateId: steerId, aggregateRevision: 0,
+      eventType: "attention.steered", actorKind: "human",
+      idempotencyKey: `attention.steered:${steerId}`,
+      payload: { scope, text: clipped },
+    });
+  });
+  return { steerId, text: clipped };
+}
+
+/** Withdraw still-pending durable guidance without erasing its audit trail. */
+export function withdrawAttentionSteers(
+  store: Store, campaignId: string, scope: AttentionSteerScope,
+): number {
+  const rows = store.db.prepare(
+    `SELECT steer_id FROM attention_steers
+     WHERE campaign_id=? AND consumed_at IS NULL AND (scope=? OR ?='all')`,
+  ).all(campaignId, scope, scope) as Array<{ steer_id: string }>;
+  if (!rows.length) return 0;
+  const at = nowIso();
+  store.transact((s) => {
+    const withdraw = s.db.prepare(
+      "UPDATE attention_steers SET consumed_at=? WHERE campaign_id=? AND steer_id=? AND consumed_at IS NULL",
+    );
+    for (const row of rows) {
+      withdraw.run(at, campaignId, row.steer_id);
+      s.appendEvent({
+        campaignId, aggregateKind: "steer", aggregateId: row.steer_id, aggregateRevision: 1,
+        eventType: "attention.steer_withdrawn", actorKind: "human",
+        idempotencyKey: `attention.steer_withdrawn:${row.steer_id}`,
+        payload: { scope, withdrawnAt: at },
+      });
+    }
+  });
+  return rows.length;
 }
 
 const FILE = "steer.json";

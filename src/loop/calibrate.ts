@@ -28,6 +28,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import type { Harness } from "../core/harness.js";
+import { processStartId } from "../daemon.js";
+import { observeBlockingOperation } from "../supervision/progress-heartbeat.js";
 import { nowIso, type Store } from "../store/store.js";
 
 export interface Calibration {
@@ -130,17 +132,27 @@ export function calibrate(
         log(`    ${variant.label}: could not build (${built.failure ?? "no worktree"})`);
         continue;
       }
-      const exp = h.run(worktree, join(dir, "staging"), args.experimentTimeoutMs);
+      const exp = observeBlockingOperation(
+        join(dir, "compute", "heartbeat.json"),
+        { campaignId: args.campaignId, cycleId: `calibration-${i + 1}`, processStartId: processStartId(process.pid) },
+        `calibration experiment ${variant.label}`,
+        () => h.run(worktree!, join(dir, "staging"), args.experimentTimeoutMs),
+      );
       if (!exp.ok || !exp.outputPath) {
         log(`    ${variant.label}: experiment produced no output (${exp.failureCode ?? "unknown"})`);
         continue;
       }
-      const ev = h.evaluate({
-        worktree, outputPath: exp.outputPath, stagingDir: join(dir, "staging"),
+      const ev = observeBlockingOperation(
+        join(dir, "evaluation", "heartbeat.json"),
+        { campaignId: args.campaignId, cycleId: `calibration-${i + 1}`, processStartId: processStartId(process.pid) },
+        `calibration evaluator ${variant.label}`,
+        () => h.evaluate({
+        worktree: worktree!, outputPath: exp.outputPath!, stagingDir: join(dir, "staging"),
         // Compared against itself: this is a measurement, not a judgement.
         baselinePrimary: 0, baselineSecondary: args.baselineSecondary,
         supportDelta: 0, timeoutMs: args.evaluatorTimeoutMs,
-      });
+        }),
+      );
       if (ev.ok && typeof ev.primary === "number" && Number.isFinite(ev.primary)) {
         samples.push(ev.primary);
         log(`    ${variant.label}: ${ev.primary.toFixed(6)}`);

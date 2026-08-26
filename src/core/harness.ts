@@ -13,7 +13,7 @@ import type {
   ChangeClass, DiffFacts, DomainAdapter, EvaluationResult, ExperimentOutcome,
 } from "../domain/types.js";
 import {
-  changedConfigKeys, commitCandidate, createWorktree, diffAgainstHead, ensureRepo,
+  changedConfigKeys, commitCandidate, commitProgramCheckpoint, createWorktree, diffAgainstHead, ensureRepo,
   escapesReproductionPolicy, git, materialiseCandidate, removeWorktree,
   revisionExists, sha256Tree, touchesProtected,
 } from "./workspace.js";
@@ -147,7 +147,11 @@ export class Harness {
   candidateSource(revision: string, maxPerFile = 8000, maxTotal = 16000): Record<string, string> {
     const out: Record<string, string> = {};
     let budget = maxTotal;
-    for (const file of this.domain.candidateFiles) {
+    let tracked: string[] = [];
+    try { tracked = git(["ls-tree", "-r", "--name-only", revision], this.repoDir).split(/\r?\n/).filter(Boolean); }
+    catch { /* candidate entrypoints below remain available */ }
+    const files = [...new Set([...this.domain.candidateFiles, ...tracked])];
+    for (const file of files) {
       if (budget <= 0) break;
       try {
         const text = git(["show", `${revision}:${file}`], this.repoDir);
@@ -193,6 +197,12 @@ export class Harness {
 
   advance(baseRevision: string, diffText: string, message: string) {
     return commitCandidate(this.repoDir, this.worktreeRoot, baseRevision, diffText, message);
+  }
+
+  checkpoint(baseRevision: string, diffText: string, message: string, programKey: string) {
+    return commitProgramCheckpoint(
+      this.repoDir, this.worktreeRoot, baseRevision, diffText, message, programKey,
+    );
   }
 
   /** The reproduction variants to attempt, from the domain's own policy. */

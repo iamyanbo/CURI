@@ -275,6 +275,10 @@ export interface DomainAdapter {
   readonly determinism: DeterminismClass;
   readonly replication: ReplicationPolicy;
   readonly cost: CostProfile;
+  /** Dimensions the protected evaluator can actually emit. Claims are compiled against this list. */
+  readonly evaluationCapabilities?: {
+    aggregate: string[]; slice: string[]; selectors: string[]; paired: string[];
+  };
 
   /** Files the executor may edit. Everything else in the worktree is read-only. */
   readonly candidateFiles: string[];

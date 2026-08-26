@@ -1,5 +1,5 @@
 export type RuntimeProfile = "local" | "cloud";
-export type ModelProvider = "gemini-api" | "vertex-ai";
+export type ModelProvider = "openrouter" | "gemini-api" | "vertex-ai";
 export type ComputeBackend = "local" | "cloud-run";
 export type StateBackend = "sqlite" | "firestore";
 
@@ -28,14 +28,14 @@ export function runtimeConfig(argv = process.argv.slice(2), env = process.env): 
     ["local", "cloud"] as const, "local", "profile");
   const defaults = profile === "cloud"
     ? { modelProvider: "vertex-ai" as const, compute: "cloud-run" as const, store: "firestore" as const }
-    : { modelProvider: "gemini-api" as const, compute: "local" as const, store: "sqlite" as const };
+    : { modelProvider: "openrouter" as const, compute: "local" as const, store: "sqlite" as const };
   const modelProvider = choice(valueOf(argv, "model-provider") ?? env.AR_MODEL_PROVIDER,
-    ["gemini-api", "vertex-ai"] as const, defaults.modelProvider, "model-provider");
+    ["openrouter", "gemini-api", "vertex-ai"] as const, defaults.modelProvider, "model-provider");
   const compute = choice(valueOf(argv, "compute") ?? env.AR_COMPUTE,
     ["local", "cloud-run"] as const, defaults.compute, "compute");
   const store = choice(valueOf(argv, "store") ?? env.AR_STORE,
     ["sqlite", "firestore"] as const, defaults.store, "store");
-  const maxCostUsd = Number(valueOf(argv, "max-cost") ?? env.AR_MAX_COST_USD ?? 20);
+  const maxCostUsd = Number(valueOf(argv, "max-cost") ?? env.AR_MAX_COST_USD ?? 0);
   if (!Number.isFinite(maxCostUsd) || maxCostUsd < 0) throw new Error("max cost must be a finite non-negative number");
   return {
     profile,

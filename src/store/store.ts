@@ -17,8 +17,109 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 const ZERO_HASH = "0".repeat(64);
+
+function campaignMemoryMigrationV2(): string {
+  return `
+    CREATE TABLE IF NOT EXISTS watcher_subscriptions (
+      campaign_id        TEXT PRIMARY KEY REFERENCES campaigns(campaign_id),
+      enabled            INTEGER NOT NULL CHECK (enabled IN (0,1)),
+      interval_seconds   INTEGER NOT NULL CHECK (interval_seconds >= 30),
+      topics_json        TEXT NOT NULL,
+      feeds_json         TEXT NOT NULL,
+      query_strategy_json TEXT NOT NULL,
+      next_sweep_at      TEXT,
+      created_at         TEXT NOT NULL,
+      updated_at         TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS watcher_cursors (
+      campaign_id      TEXT NOT NULL REFERENCES campaigns(campaign_id),
+      provider         TEXT NOT NULL,
+      query_hash       TEXT NOT NULL,
+      query_text       TEXT NOT NULL,
+      cursor_json      TEXT NOT NULL,
+      watermark_at     TEXT,
+      etag             TEXT,
+      last_success_at  TEXT,
+      last_error       TEXT,
+      next_retry_at    TEXT,
+      PRIMARY KEY (campaign_id, provider, query_hash)
+    );
+    CREATE TABLE IF NOT EXISTS campaign_memory_links (
+      campaign_id    TEXT NOT NULL REFERENCES campaigns(campaign_id),
+      memory_kind    TEXT NOT NULL CHECK (memory_kind IN ('source','mechanism','idea','code_inventory')),
+      memory_id      TEXT NOT NULL,
+      relevance      REAL NOT NULL DEFAULT 0 CHECK (relevance BETWEEN 0 AND 1),
+      first_seen_at  TEXT NOT NULL,
+      last_seen_at   TEXT NOT NULL,
+      PRIMARY KEY (campaign_id, memory_kind, memory_id)
+    );
+    CREATE TABLE IF NOT EXISTS idea_cards (
+      idea_id               TEXT PRIMARY KEY,
+      campaign_id           TEXT NOT NULL REFERENCES campaigns(campaign_id),
+      mechanism_id          TEXT,
+      action                TEXT NOT NULL CHECK (action IN ('adopt','adapt','combine','verify','investigate')),
+      title                 TEXT NOT NULL,
+      target_domain         TEXT NOT NULL,
+      rationale             TEXT NOT NULL,
+      scores_json           TEXT NOT NULL,
+      code_status           TEXT NOT NULL CHECK (code_status IN ('absent','present','partial','unknown')),
+      assumptions_json      TEXT NOT NULL,
+      experiment_json       TEXT NOT NULL,
+      macro_implications    TEXT NOT NULL,
+      source_ids_json       TEXT NOT NULL,
+      state                 TEXT NOT NULL CHECK (state IN ('new','reviewed','accepted','rejected','scheduled','tested')),
+      signal_reason         TEXT,
+      created_at            TEXT NOT NULL,
+      updated_at            TEXT NOT NULL,
+      reviewed_at           TEXT
+    );
+    CREATE TABLE IF NOT EXISTS memory_retrievals (
+      retrieval_id    TEXT PRIMARY KEY,
+      campaign_id     TEXT NOT NULL REFERENCES campaigns(campaign_id),
+      attempt_id      TEXT REFERENCES attempts(attempt_id),
+      role            TEXT NOT NULL CHECK (role IN ('architect','manager','executor','watcher','human')),
+      query_text      TEXT NOT NULL,
+      filters_json    TEXT NOT NULL,
+      result_ids_json TEXT NOT NULL,
+      created_at      TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS attention_steers (
+      steer_id         TEXT PRIMARY KEY,
+      campaign_id      TEXT NOT NULL REFERENCES campaigns(campaign_id),
+      scope             TEXT NOT NULL CHECK (scope IN ('micro','macro','watcher','all')),
+      text              TEXT NOT NULL,
+      created_at        TEXT NOT NULL,
+      consumed_at       TEXT,
+      expires_program_revision INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_ideas_signal
+      ON idea_cards(campaign_id, state, created_at);
+    CREATE INDEX IF NOT EXISTS idx_memory_links
+      ON campaign_memory_links(campaign_id, relevance DESC, last_seen_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_retrieval_attempt
+      ON memory_retrievals(attempt_id, created_at);
+  `;
+}
+
+function campaignEnrichmentMigrationV3(): string {
+  return `
+    CREATE TABLE IF NOT EXISTS campaign_source_enrichments (
+      campaign_id      TEXT NOT NULL REFERENCES campaigns(campaign_id),
+      source_version_id TEXT NOT NULL,
+      status           TEXT NOT NULL CHECK (status IN ('pending','succeeded','failed','waiting_external')),
+      model            TEXT,
+      prompt_hash      TEXT,
+      last_error       TEXT,
+      attempted_at     TEXT NOT NULL,
+      completed_at     TEXT,
+      PRIMARY KEY (campaign_id, source_version_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_campaign_enrichment_status
+      ON campaign_source_enrichments(campaign_id, status, attempted_at);
+  `;
+}
 
 export type ActorKind =
   | "supervisor" | "manager" | "executor" | "compute" | "evaluator" | "human" | "system";
@@ -154,20 +255,59 @@ export class Store {
     const existing = this.db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='events'")
       .get();
-    if (existing) return;
-    // The schema's lane constraints are substituted from LANES rather than
-    // written out again, so the database cannot disagree with the code.
-    const sql = readFileSync(join(HERE, "schema.sql"), "utf8")
-      .replace(/__LANES__/g, laneSqlList());
-    if (sql.includes("__LANES__")) throw new Error("lane substitution failed");
-    this.db.exec(sql);
+    if (!existing) {
+      // The schema's lane constraints are substituted from LANES rather than
+      // written out again, so the database cannot disagree with the code.
+      const sql = readFileSync(join(HERE, "schema.sql"), "utf8")
+        .replace(/__LANES__/g, laneSqlList());
+      if (sql.includes("__LANES__")) throw new Error("lane substitution failed");
+      this.db.exec(sql);
+      this.db.exec(
+        `CREATE TABLE IF NOT EXISTS schema_meta (
+           version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, checksum TEXT NOT NULL)`,
+      );
+      this.db.prepare("INSERT INTO schema_meta (version, applied_at, checksum) VALUES (?, ?, ?)")
+        .run(SCHEMA_VERSION, nowIso(), sha256(sql));
+      return;
+    }
+
+    // v1 returned as soon as it saw the event table, so older databases need a
+    // real ordered migration path. Each step is idempotent and transactional;
+    // the existing event rows and their hashes are never rewritten.
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS schema_meta (
          version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, checksum TEXT NOT NULL)`,
     );
-    this.db
-      .prepare("INSERT INTO schema_meta (version, applied_at, checksum) VALUES (?, ?, ?)")
-      .run(SCHEMA_VERSION, nowIso(), sha256(sql));
+    const latest = this.db.prepare("SELECT MAX(version) AS version FROM schema_meta")
+      .get() as { version: number | null };
+    let version = latest.version ?? 1;
+    if (latest.version === null) {
+      this.db.prepare("INSERT INTO schema_meta (version, applied_at, checksum) VALUES (1, ?, ?)")
+        .run(nowIso(), "legacy-v1");
+    }
+    if (version < 2) {
+      const migration = campaignMemoryMigrationV2();
+      const apply = this.db.transaction(() => {
+        this.db.exec(migration);
+        this.db.prepare("INSERT INTO schema_meta (version, applied_at, checksum) VALUES (2, ?, ?)")
+          .run(nowIso(), sha256(migration));
+      });
+      apply.immediate();
+      version = 2;
+    }
+    if (version < 3) {
+      const migration = campaignEnrichmentMigrationV3();
+      const apply = this.db.transaction(() => {
+        this.db.exec(migration);
+        this.db.prepare("INSERT INTO schema_meta (version, applied_at, checksum) VALUES (3, ?, ?)")
+          .run(nowIso(), sha256(migration));
+      });
+      apply.immediate();
+      version = 3;
+    }
+    if (version > SCHEMA_VERSION) {
+      throw new Error(`database schema v${version} is newer than this binary (v${SCHEMA_VERSION})`);
+    }
   }
 
   /** The only mutation entry point. No I/O other than SQLite inside `fn`. */

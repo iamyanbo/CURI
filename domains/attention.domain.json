@@ -43,9 +43,8 @@
     }
   ],
   "runCommand": [
-    "python",
-    "-c",
-    "import sys; sys.exit(0)"
+    "nvcc",
+    "--version"
   ],
   "evaluatorCommand": [
     "python",

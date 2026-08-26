@@ -13,12 +13,15 @@
     "migrate:firestore": "node --import tsx src/cloud/migrate-state.ts"
   },
   "dependencies": {
+    "@genkit-ai/compat-oai": "^1.41.0",
     "@genkit-ai/google-genai": "^1.41.0",
     "@google-cloud/firestore": "^9.0.0",
     "@google-cloud/run": "^4.0.0",
     "@google-cloud/storage": "^8.0.1",
     "better-sqlite3": "^11.10.0",
-    "genkit": "^1.41.0"
+    "genkit": "^1.41.0",
+    "katex": "^0.18.4",
+    "marked": "^18.0.11"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

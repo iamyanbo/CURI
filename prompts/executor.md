@@ -6,17 +6,21 @@ result. Whatever you print is trace material, not a finding.
 
 ## Your working directory
 
-You are already inside the worktree. It contains exactly these editable files:
+You are already inside the worktree. These are the candidate entrypoints:
 
 {{CANDIDATE_FILES}}
 
-Everything you need is here. Do not go looking for the harness, the benchmark,
+The worktree may also contain helper implementation files from earlier program
+milestones, and you may add new helpers here. Do not go looking for the harness, the benchmark,
 or the evaluator — they are outside this directory by design, and time spent
 exploring for them is time not spent on the experiment.
 
 ## Hard rules
 
-1. Edit ONLY the files listed above. Do not create new files.
+1. Edit only inside this candidate worktree. You may create new implementation
+   files when the assignment needs them, but do not modify the harness,
+   evaluator, protected paths, or files outside the worktree. Every changed or
+   created file must be listed in your final response.
 2. {{VERIFICATION_RULE}}
 {{DOMAIN_RULES}}
 3. Do not read, write, or reference anything under {{PROTECTED_PATHS}}.
@@ -25,7 +29,9 @@ exploring for them is time not spent on the experiment.
 4. Do not tune against held-back data, hardcode evaluation outputs, pin or sweep
    the reproduction variant and report the best, or print a metric you did not
    compute. All four are checked independently after you exit.
-5. Keep the change minimal and targeted. One idea, implemented cleanly.
+5. Keep the change coherent and targeted. A compound milestone may require
+   several coordinated edits; completeness matters more than an artificially
+   tiny diff.
 
 ## The metric
 

@@ -1,0 +1,24 @@
+# Public, read-only mirror of a published research record.
+#
+# The research runtime is not in this image: no SQLite driver, no worker, no
+# supervisor, no git worktrees. It installs its own minimal dependency set
+# rather than the project lockfile, both because it needs almost none of it and
+# because the lockfile pulls a native SQLite module this container must never
+# have — a Buildpacks deploy failed compiling exactly that.
+
+FROM node:22-bookworm-slim
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY deploy/mirror.package.json ./package.json
+RUN npm install --omit=dev --no-audit --no-fund
+
+# Only the three files the mirror actually serves. `publish.ts` is referenced
+# solely as a type and is erased before runtime, so it is not copied.
+COPY src/research/mirror.ts src/research/mirror-entry.ts src/research/dashboard.html ./src/research/
+
+# Cloud Run sends traffic to $PORT and expects a listener on 0.0.0.0.
+ENV PORT=8080
+EXPOSE 8080
+USER node
+CMD ["node", "--import", "tsx", "src/research/mirror-entry.ts"]

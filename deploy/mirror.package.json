@@ -1,0 +1,12 @@
+{
+  "name": "research-mirror",
+  "private": true,
+  "type": "module",
+  "description": "Read-only public mirror of a published research record. Depends on nothing that can reach local research state: no SQLite driver, no worker, no supervisor. marked and katex are served to the page from here so the mirror renders with no external network.",
+  "dependencies": {
+    "@google-cloud/firestore": "^9.0.0",
+    "tsx": "^4.20.0",
+    "marked": "^18.0.11",
+    "katex": "^0.18.4"
+  }
+}

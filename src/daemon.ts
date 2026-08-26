@@ -160,11 +160,14 @@ export function detach(stateDir: string, cliPath: string, args: string[]): { pid
 
 /** Record this process as the campaign owner (called by the detached child). */
 export function claimOwnership(stateDir: string, logPath: string, args: string[]): void {
+  const prior = inspect(stateDir);
+  const resolvedLogPath = logPath === "(detached)" && prior.state === "running"
+    && prior.run.pid === process.pid ? prior.run.logPath : logPath;
   const run: RunFile = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
     processStartId: processStartId(process.pid) ?? "",
-    logPath,
+    logPath: resolvedLogPath,
     args,
   };
   writeFileSync(runFilePath(stateDir), JSON.stringify(run, null, 2), "utf8");

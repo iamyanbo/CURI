@@ -81,6 +81,15 @@ export function removeWorktree(repoDir: string, dir: string): void {
 
 /** Raw diff facts, before any domain interpretation. */
 export function diffAgainstHead(worktree: string): { changedPaths: string[]; diffText: string } {
+  // `git diff HEAD` omits untracked files. Mark them intent-to-add so new
+  // implementation files are visible in the same diff, without staging their
+  // contents or committing anything in the disposable worktree.
+  const untracked = spawnSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
+    cwd: worktree, encoding: "utf8", windowsHide: true,
+  }).stdout?.split("\0").filter(Boolean) ?? [];
+  if (untracked.length > 0) {
+    spawnSync("git", ["add", "-N", "--", ...untracked], { cwd: worktree, windowsHide: true });
+  }
   const names = spawnSync("git", ["diff", "--name-only", "HEAD"], { cwd: worktree, encoding: "utf8", windowsHide: true });
   const diff = spawnSync("git", ["diff", "HEAD"], {
     cwd: worktree, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, windowsHide: true });
@@ -179,7 +188,31 @@ export function commitCandidate(
   diffText: string,
   message: string,
 ): { ok: true; revision: string } | { ok: false; failure: string } {
-  const dir = join(worktreeRoot, `advance-${Date.now()}`);
+  return commitRevision(repoDir, worktreeRoot, baseRevision, diffText, message, "baseline/current");
+}
+
+/** Persist a validated intermediate program state without advancing the baseline. */
+export function commitProgramCheckpoint(
+  repoDir: string,
+  worktreeRoot: string,
+  baseRevision: string,
+  diffText: string,
+  message: string,
+  programKey: string,
+): { ok: true; revision: string } | { ok: false; failure: string } {
+  if (!/^[a-f0-9]{8,64}$/.test(programKey)) return { ok: false, failure: "invalid program key" };
+  return commitRevision(repoDir, worktreeRoot, baseRevision, diffText, message, `program/${programKey}`);
+}
+
+function commitRevision(
+  repoDir: string,
+  worktreeRoot: string,
+  baseRevision: string,
+  diffText: string,
+  message: string,
+  refSuffix: string,
+): { ok: true; revision: string } | { ok: false; failure: string } {
+  const dir = join(worktreeRoot, `commit-${Date.now()}`);
   try {
     git(["worktree", "add", "-q", "--detach", dir, baseRevision], repoDir);
     if (diffText.trim().length > 0) {
@@ -195,8 +228,7 @@ export function commitCandidate(
     git(["add", "-A"], dir);
     git(["commit", "-q", "-m", message], dir);
     const revision = git(["rev-parse", "HEAD"], dir);
-    git(["update-ref", `refs/autoresearch/baseline/${revision}`, revision], repoDir);
-    git(["update-ref", "refs/autoresearch/baseline/current", revision], repoDir);
+    git(["update-ref", `refs/autoresearch/${refSuffix}`, revision], repoDir);
     return { ok: true, revision };
   } catch (err) {
     return { ok: false, failure: String(err).slice(0, 200) };
