@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -88,4 +88,15 @@ test("a nested error chain terminates instead of recursing forever", () => {
   const loop = new Error("outer") as Error & { cause?: unknown };
   loop.cause = loop;
   assert.match(providerErrorDetail(loop), /error chain truncated/);
+});
+
+test("AR_MODEL selects the model on whichever provider is configured", () => {
+  // A user who sets AR_MODEL and points the runtime at OpenRouter must get the
+  // model they named, not a silent fallback to the built-in default.
+  const worker = readFileSync(join(process.cwd(), "src", "worker", "genkit-worker.ts"), "utf8");
+  const openRouterBranch = worker.slice(worker.indexOf('if (provider === "openrouter")'),
+    worker.indexOf('if (provider === "vertex-ai"'));
+  assert.match(openRouterBranch, /process\.env\.AR_MODEL/);
+  const googleBranch = worker.slice(worker.indexOf('const requested = request.model'));
+  assert.match(googleBranch, /process\.env\.AR_MODEL/);
 });

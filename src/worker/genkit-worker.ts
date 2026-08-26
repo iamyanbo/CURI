@@ -466,7 +466,10 @@ function providerFor(request: WorkerRequest) {
     if (!apiKey) {
       throw new Error("OpenRouter credential missing: set OPENROUTER_API_KEY or sign in to OpenRouter with Pi");
     }
-    const modelName = request.model ?? DEFAULT_OPENROUTER_MODEL;
+    // AR_MODEL selects the model on every provider. Honouring it only on the
+    // Google branch meant an OpenRouter user who set it silently got a different
+    // model than the one they configured.
+    const modelName = request.model ?? (process.env.AR_MODEL?.trim() || DEFAULT_OPENROUTER_MODEL);
     const plugin = openAICompatible({
       name: "openrouter",
       apiKey,
@@ -487,6 +490,15 @@ function providerFor(request: WorkerRequest) {
   // A daemon is started without an explicit --model, so the deployment picks
   // its model through configuration rather than through every call site.
   const requested = request.model ?? process.env.AR_MODEL?.trim();
+  // Google surfaces only serve Gemini ids, so an id left over from another
+  // provider is refused rather than silently served as a different model: a
+  // substitution nobody is told about makes every later cost and quality number
+  // a statement about a model the operator never chose.
+  if (requested && !requested.startsWith("gemini-")) {
+    process.emitWarning(
+      `AR_MODEL="${requested}" is not a Gemini model id; ${provider} serves Gemini only. `
+      + `Falling back to ${DEFAULT_GEMINI_MODEL} — set AR_MODEL_PROVIDER=openrouter to use it.`);
+  }
   const modelName = requested?.startsWith("gemini-") ? requested : DEFAULT_GEMINI_MODEL;
   if (provider === "vertex-ai" || provider === "vertex") {
     // Vertex accepts either an express-mode API key or Application Default

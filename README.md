@@ -178,37 +178,53 @@ admitted sources are cited by identifier in the briefs and syntheses that use th
 
 ## Spin-up
 
+The runtime is local-first: **bring your own API key in `.env` and it runs on your machine.**
+Nothing about the research loop needs a cloud account. The Google Cloud pieces — the published
+record and its public mirror — are an optional layer on top, and everything below works without
+them.
+
 ### Prerequisites
 
-- Node.js 22+, Python 3.10 with CUDA PyTorch (for GPU experiments), git
-- A Google Cloud project with Vertex AI enabled
+- Node.js 22+ and git
+- An API key from any one supported provider
+- Python 3.10 with PyTorch for GPU experiments — optional, and only for experiments that measure
+  models on hardware. Directions that are analytical or source-driven do not need it.
 
-### Run locally
+### Configure a provider
 
 ```bash
 npm install
-cp .env.example .env      # then fill in the credential below
+cp .env.example .env
 ```
 
-`.env` needs a Vertex AI express-mode key and a model:
+Fill in whichever provider you have a key for. `AR_MODEL` selects the model on all three:
+
+| `AR_MODEL_PROVIDER` | Credential | Example `AR_MODEL` |
+|---|---|---|
+| `gemini-api` | `GEMINI_API_KEY` — free tier at [aistudio.google.com](https://aistudio.google.com/apikey) | `gemini-3.7-flash` |
+| `vertex-ai` | `VERTEX_API_KEY` (express mode), or Application Default Credentials + `GOOGLE_CLOUD_PROJECT` | `gemini-3.7-flash` |
+| `openrouter` | `OPENROUTER_API_KEY` | any OpenRouter model id |
 
 ```
-AR_MODEL_PROVIDER=vertex-ai
-VERTEX_API_KEY=<your key>
+AR_MODEL_PROVIDER=gemini-api
+GEMINI_API_KEY=<your key>
 AR_MODEL=gemini-3.7-flash
 AR_MAX_COST_USD=20
 ```
 
-Values already in the real environment always win over the file, so the same code runs unchanged
-in the cloud, where configuration arrives as service environment variables.
+Values already in the real environment always win over the file, so the same code runs unchanged in
+the cloud, where configuration arrives as service environment variables. `.env` is untracked and
+must stay that way.
+
+```bash
+npx tsx src/cli.ts doctor        # checks the credential, the model and the toolchain
+```
+
+### Run a direction
 
 ```bash
 npx tsx src/cli.ts research preflight --refresh     # measure this machine
-npx tsx src/cli.ts research init \
-  --direction my-direction --title "My research direction" \
-  --brief "What should be investigated and why" \
-  --domain domains/attention.domain.json \
-  --topic "search topic for the watcher"
+npx tsx src/cli.ts research init   --direction my-direction --title "My research direction"   --brief "What should be investigated and why"   --domain domains/attention.domain.json   --topic "search topic for the watcher"
 
 npx tsx src/cli.ts research supervisor start        # the research loop
 npx tsx src/cli.ts research watch start             # literature intake
@@ -224,30 +240,45 @@ npx tsx src/cli.ts research continuous              # keep going past a pause
 npx tsx src/cli.ts research stop --all              # stop everything
 ```
 
-### Deploy the public mirror
+The spend ceiling is enforced before every orchestrator turn and every watcher sweep, so an
+unattended run has a hard upper bound you set yourself.
+
+### Optional: publish the record and a public mirror
+
+Only needed if you want the research record readable outside your machine. The mirror is read-only
+and scales to zero, so an idle deployment costs nothing.
 
 ```bash
 gcloud auth application-default login
-gcloud services enable firestore.googleapis.com run.googleapis.com \
-  artifactregistry.googleapis.com cloudbuild.googleapis.com
+gcloud services enable firestore.googleapis.com run.googleapis.com   artifactregistry.googleapis.com cloudbuild.googleapis.com
 
 # Firestore in Native mode, once per project
-curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-  -H "Content-Type: application/json" \
-  "https://firestore.googleapis.com/v1/projects/$PROJECT/databases?databaseId=(default)" \
-  -d '{"locationId":"us-central1","type":"FIRESTORE_NATIVE"}'
+curl -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)"   -H "Content-Type: application/json"   "https://firestore.googleapis.com/v1/projects/$PROJECT/databases?databaseId=(default)"   -d '{"locationId":"us-central1","type":"FIRESTORE_NATIVE"}'
 
 npx tsx src/cli.ts research publish --dry-run       # inspect what would be published
 npx tsx src/cli.ts research publish --project $PROJECT
 gcloud builds submit --config cloudbuild.mirror.yaml --project $PROJECT
 ```
 
-The mirror scales to zero, so an idle deployment costs nothing.
+### Why experiments run on local hardware
+
+Experiments execute on whatever GPU the machine has, not on a cloud accelerator. That was a
+deliberate cost decision rather than a missing feature: the measured bottleneck in this system is
+model latency, not device throughput — 3442s of tool time against 5695s waiting on the model, with
+the local GPU at 33% utilisation — so renting an accelerator would have consumed a limited credit
+grant to keep a faster card idle for two thirds of the run. The credits went to the model calls
+that were actually the constraint.
+
+Nothing in the design prevents it. The executor runs ordinary Python in a git worktree, so pointing
+it at a cloud VM with a larger GPU is a matter of running the runtime there; the environment
+preflight measures whatever devices it finds and the orchestrator fixes experiment scale against
+that sheet. A larger card widens the model sizes and context lengths a direction can reach, which
+is exactly the limitation recorded below.
 
 ### Tests
 
 ```bash
-npm test        # 73 tests
+npm test        # 76 tests
 npm run typecheck
 ```
 
@@ -308,6 +339,36 @@ itself, judging a milestone reached:
   disperses attention. Asymmetric K-INT8/V-INT4 held retrieval at 4-bit Value precision.
 - **A regime dispatcher composing all three** (`supported`) — an integration task, not another
   sweep.
+
+### Are these findings novel?
+
+Mostly not, and the record should say so plainly. Three of the four re-derive results that already
+exist in the literature: the causal blindness of attention-mass eviction is the failure mode
+StreamingLLM and later needle-retrieval work describe for H2O-style policies; the speculative
+decoding result is the standard acceptance-rate/latency crossover inequality, arrived at from
+measurement rather than from the algebra; and the K/V asymmetry is the finding KIVI reports and
+builds its per-channel key quantization on. The dispatcher that composes them is an integration,
+not a new mechanism.
+
+That is an honest description of a system that had a consumer GPU and a few days. What is
+*not* replication is how the findings were reached and what they cost to reach:
+
+- They were **independently re-derived**, not retrieved. The eviction result came out of a design
+  that included a random-eviction control, which is why "0% at 50% budget" is a claim about the
+  policy rather than about the task being hard. Re-verification on hardware you control is
+  legitimate scientific output, and it is the part of published work that is most often absent.
+- The eviction study **refuted its own leading hypothesis** and was recorded as `bounded` rather
+  than rewritten into a success. A hill-climbing loop has no way to produce that outcome.
+- The speculative-decoding finding is a **negative result** — the technique lost wall-clock time at
+  a healthy acceptance rate — and it survived into the record instead of being discarded as a
+  failed run.
+
+The contribution this repository actually claims is the **system**, not the four findings: a
+delegation gate that mechanically refuses untethered and near-duplicate briefs, syntheses that
+accumulate and are superseded rather than overwritten, honest per-call cost metering, and an agent
+that is allowed to stop when it has nothing worth asking. Whether that machinery can produce a
+finding that is *not* in the literature is an open question about scale, and the limitations below
+are the reason it has not been tested yet.
 
 ### What we learned building it
 
