@@ -4,14 +4,14 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 
 import { statePath, stateDirName } from "./paths.js";
 
-import { diffAgainstHead, git, sha256File } from "../core/workspace.js";
+import { commitProgramCheckpoint, diffAgainstHead, git, sha256File } from "../core/workspace.js";
 import { runProcess, runWorker } from "../worker/genkit-worker.js";
 import type { MarkdownAction, WorkerResult } from "../worker/types.js";
 import { immediateStopFile } from "./control.js";
 import { checkDelegation, checkSynthesis } from "./delegation.js";
 import { preflightFacts, renderPreflightMarkdown } from "./preflight.js";
 import { ResearchStore, researchHash, researchId, researchNow } from "./store.js";
-import type { LeanTask, OutcomeVerdict } from "./types.js";
+import type { ArtifactProgram, LeanDirection, LeanTask, OutcomeVerdict } from "./types.js";
 
 /**
  * How many executor attempts one task gets before the runtime stops retrying
@@ -21,6 +21,8 @@ import type { LeanTask, OutcomeVerdict } from "./types.js";
 export const MAX_EXECUTOR_ATTEMPTS = Number(process.env.AR_MAX_EXECUTOR_ATTEMPTS ?? 3);
 
 const ORCHESTRATOR_ACTIONS = [
+  ["start_program", "Start one persistent artifact-building program in Markdown. State the thesis, nearest prior art, intended novelty, interfaces, milestones, validation plan, and pivot conditions."],
+  ["checkpoint_program", "Checkpoint the returned program task after its decisive checks passed. Explain what coherent capability is now reusable and why the checkpoint is justified independently of metric improvement."],
   ["delegate_task", "Delegate one research task in Markdown. The task may be a reproduction, mechanism test, analysis, implementation, comparison, integration, or another method suited to the question."],
   ["record_supported", "Conclude the returned task as supported using a scoped Markdown interpretation of its evidence."],
   ["record_refuted", "Conclude the returned task as refuted using a scoped Markdown interpretation of its evidence."],
@@ -34,6 +36,45 @@ const ORCHESTRATOR_ACTIONS = [
   ["pause_research", "Pause the direction with a Markdown explanation when further autonomous work is not justified."],
 ] as const;
 
+function compactValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(String).join(", ");
+  if (value && typeof value === "object") return Object.entries(value as Record<string, unknown>)
+    .map(([key, item]) => `${key}: ${compactValue(item)}`).join("; ");
+  return String(value ?? "");
+}
+
+/** Public, immutable context agents need without exposing the protected evaluator. */
+export function renderDomainContract(direction: LeanDirection, program?: ArtifactProgram | null): string {
+  let config: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(readFileSync(direction.domain_path, "utf8"));
+    if (parsed && typeof parsed === "object") config = parsed as Record<string, unknown>;
+  } catch { /* a non-JSON domain still receives the path and program contract */ }
+  const metric = config.metric as Record<string, unknown> | undefined;
+  const replication = config.replication as Record<string, unknown> | undefined;
+  const contract = config.executorContract as Record<string, unknown> | undefined;
+  const seedFiles = Array.isArray(config.seedFiles) ? config.seedFiles as Array<Record<string, unknown>> : [];
+  const lines = [
+    "## Immutable domain and artifact contract",
+    `- Domain: ${String(config.id ?? direction.direction_id)}`,
+    `- Candidate entrypoints: ${compactValue(config.candidateFiles ?? "defined by the task")}`,
+    `- Repository implementation paths: ${seedFiles.length ? seedFiles.map((item) => String(item.from)).join(", ") : "defined by the task"}`,
+    `- Visible development command: ${compactValue(config.developmentCommand ?? config.runCommand ?? "defined by the task")}`,
+    `- Public metric: ${metric ? `${compactValue(metric.name)} (${compactValue(metric.direction)})` : "question-specific; no global objective"}`,
+    `- Replication policy: ${replication ? `${compactValue(replication.kind)} across ${Array.isArray(replication.variantValues) ? replication.variantValues.length : "harness-owned"} variants` : "question-specific"}`,
+    `- Candidate-controlled architecture keys: ${compactValue(config.architectureKeys ?? "none declared")}`,
+    `- Harness-owned configuration keys: ${compactValue(config.reservedConfigKeys ?? "none declared")}`,
+    "- Protected evaluator and held-back measurements are unavailable to agents. Visible diagnostics may guide debugging; protected confirmation may not be queried for iterative tuning.",
+  ];
+  if (contract) for (const [key, value] of Object.entries(contract)) lines.push(`- ${key}: ${compactValue(value)}`);
+  if (config.executorRules) lines.push(`\n### Domain implementation rules\n${String(config.executorRules)}`);
+  lines.push(program
+    ? `\n### Active artifact program ${program.program_id}\n${program.thesis_md}\nCurrent checkpoint revision: ${program.current_revision}`
+    : "\n### Active artifact program\nNone. Exploratory research may proceed, but a multi-task implementation must begin with `start_program`."
+  );
+  return lines.join("\n");
+}
+
 function compact(value: string | null | undefined, max = 8_000): string {
   const text = String(value ?? "");
   return text.length <= max ? text : `${text.slice(0, max)}\n…[truncated; inspect on demand]`;
@@ -41,6 +82,7 @@ function compact(value: string | null | undefined, max = 8_000): string {
 
 function orchestratorContext(store: ResearchStore, directionId: string, projectRoot: string): string {
   const context = store.context(directionId);
+  const activeProgram = context.programs.find((program) => program.status === "active") ?? null;
   const awaiting = context.tasks.find((task) => task.state === "awaiting_orchestrator") ?? null;
   const awaitingRun = awaiting
     ? context.runs.find((run) => run.task_id === awaiting.task_id && run.role === "executor") as Record<string, unknown> | undefined
@@ -112,6 +154,7 @@ function orchestratorContext(store: ResearchStore, directionId: string, projectR
     `# Direction: ${context.direction.title}`,
     context.direction.brief_md,
     `## Human constraints\n${context.direction.constraints_md || "None supplied."}`,
+    renderDomainContract(context.direction, activeProgram),
     renderPreflightMarkdown(preflightFacts(projectRoot)),
     `## Runtime feedback on your recent turns\n${feedback || "None. No delegation was refused and no task exhausted its attempts."}`,
     `## Components\n${components || "No components. Components are optional."}`,
@@ -122,6 +165,8 @@ function orchestratorContext(store: ResearchStore, directionId: string, projectR
     `## Undigested findings\n${undigested || "No uncited outcomes."}`,
     returned,
     `## Relevant watcher cards\n${sourceCards || "No admitted sources yet. You may request watcher questions or begin clearly labeled exploration."}`,
+    `## Program checkpoints\n${context.programCheckpoints.slice(0, 12).map((checkpoint) =>
+      `- ${String(checkpoint.checkpoint_id)} ${String(checkpoint.revision).slice(0, 12)}: ${compact(String(checkpoint.summary_md), 500)}`).join("\n") || "No artifact checkpoints."}`,
     `## Task history\n${history || "No prior tasks."}`,
   ].join("\n\n");
 }
@@ -173,19 +218,72 @@ function directionIdentifiers(store: ResearchStore, directionId: string): string
     ...column("SELECT outcome_id FROM outcomes WHERE direction_id=? ORDER BY created_at DESC"),
     ...column("SELECT source_id FROM sources WHERE direction_id=? AND state='relevant' ORDER BY updated_at DESC"),
     ...column("SELECT synthesis_id FROM component_syntheses WHERE direction_id=? ORDER BY created_at DESC"),
+    ...column("SELECT program_id FROM artifact_programs WHERE direction_id=? ORDER BY created_at DESC"),
+    ...column(`SELECT pc.checkpoint_id FROM program_checkpoints pc JOIN artifact_programs p ON p.program_id=pc.program_id
+      WHERE p.direction_id=? ORDER BY pc.created_at DESC`),
   ];
 }
 
 export function applyOrchestratorActions(store: ResearchStore, directionId: string, runId: string,
-  actions: MarkdownAction[]): { taskId: string | null; paused: boolean } {
+  actions: MarkdownAction[], projectRoot = process.cwd()): { taskId: string | null; paused: boolean } {
   let taskId: string | null = null;
   let paused = false;
   const watcherRequestedThisTurn = actions.some((action) => action.name === "request_watch");
   const admittedSources = Number((store.db.prepare(
     "SELECT COUNT(*) count FROM sources WHERE direction_id=? AND state='relevant'",
   ).get(directionId) as { count: number }).count);
-  for (const action of actions) {
+  // Preserve a valid returned implementation before a verdict concludes its
+  // task. The model's tool-call order must not decide whether code survives.
+  const ordered = [...actions.filter((action) => action.name === "checkpoint_program"),
+    ...actions.filter((action) => action.name !== "checkpoint_program")];
+  for (const action of ordered) {
     const markdown = action.markdown || "(No additional Markdown supplied.)";
+    if (action.name === "start_program") {
+      try {
+        store.startProgram(directionId, markdown, git(["rev-parse", "HEAD"], projectRoot));
+      } catch (error) {
+        store.saveNote(directionId, runId, "runtime", `Program start refused: ${String(error)}\n\n${markdown}`);
+      }
+      continue;
+    }
+    if (action.name === "checkpoint_program") {
+      const awaiting = currentAwaitingTask(store, directionId);
+      if (!awaiting?.program_id || !awaiting.workspace_path) {
+        store.saveNote(directionId, runId, "runtime",
+          `Program checkpoint refused: no returned program task with a preserved worktree.\n\n${markdown}`);
+        continue;
+      }
+      const verifications = store.db.prepare(
+        "SELECT exit_code FROM commands WHERE task_id=? AND kind='verification' ORDER BY created_at",
+      ).all(awaiting.task_id) as Array<{ exit_code: number | null }>;
+      if (verifications.length === 0 || verifications.some((check) => check.exit_code !== 0)) {
+        store.saveNote(directionId, runId, "runtime",
+          `Program checkpoint refused: at least one independently rerun check must pass and none may fail.\n\n${markdown}`);
+        continue;
+      }
+      const diff = diffAgainstHead(awaiting.workspace_path);
+      if (diff.changedPaths.length === 0) {
+        store.saveNote(directionId, runId, "runtime", `Program checkpoint refused: the task changed no files.\n\n${markdown}`);
+        continue;
+      }
+      const program = store.db.prepare(
+        "SELECT current_revision FROM artifact_programs WHERE program_id=? AND direction_id=? AND status='active'",
+      ).get(awaiting.program_id, directionId) as { current_revision: string } | undefined;
+      if (!program) {
+        store.saveNote(directionId, runId, "runtime", `Program checkpoint refused: active program is missing.\n\n${markdown}`);
+        continue;
+      }
+      const committed = commitProgramCheckpoint(projectRoot, statePath(projectRoot, "worktrees"),
+        program.current_revision, diff.diffText, markdown.split(/\r?\n/)[0]!.slice(0, 120),
+        researchHash(awaiting.program_id).slice(0, 16));
+      if (!committed.ok) {
+        store.saveNote(directionId, runId, "runtime", `Program checkpoint refused: ${committed.failure}\n\n${markdown}`);
+        continue;
+      }
+      store.checkpointProgram({ directionId, programId: awaiting.program_id, taskId: awaiting.task_id,
+        revision: committed.revision, markdown });
+      continue;
+    }
     if (action.name === "create_component") {
       if (!store.createComponent(directionId, markdown)) {
         store.saveNote(directionId, runId, "runtime",
@@ -308,7 +406,7 @@ export async function runOrchestratorTurn(input: {
   if (!result.ok) return { runId, taskId: null, paused: false, result };
   const actions = result.actions ?? [];
   if (actions.length === 0) input.store.saveNote(input.directionId, runId, "orchestrator", result.finalText || "No action selected.");
-  const applied = applyOrchestratorActions(input.store, input.directionId, runId, actions);
+  const applied = applyOrchestratorActions(input.store, input.directionId, runId, actions, input.projectRoot);
   return { runId, ...applied, result };
 }
 
@@ -331,11 +429,11 @@ function ensureInside(root: string, path: string): string {
  * Only lock contention is retried. Any other failure (a bad revision, no disk)
  * is returned to the caller on the first attempt, since retrying cannot help.
  */
-function addWorktreeContended(projectRoot: string, workspace: string): void {
+function addWorktreeContended(projectRoot: string, workspace: string, revision: string): void {
   const deadline = Date.now() + 30_000;
   for (let attempt = 1; ; attempt++) {
     try {
-      git(["worktree", "add", "-q", "--detach", workspace, "HEAD"], projectRoot);
+      git(["worktree", "add", "-q", "--detach", workspace, revision], projectRoot);
       return;
     } catch (error) {
       const text = String((error as { stderr?: string })?.stderr ?? error);
@@ -351,11 +449,11 @@ function addWorktreeContended(projectRoot: string, workspace: string): void {
   }
 }
 
-function createTaskWorkspace(projectRoot: string, taskId: string): string {
+function createTaskWorkspace(projectRoot: string, taskId: string, revision = "HEAD"): string {
   const root = statePath(projectRoot, "worktrees");
   mkdirSync(root, { recursive: true });
   const workspace = join(root, taskId.replace(/[^a-z0-9_-]/gi, "_"));
-  addWorktreeContended(projectRoot, workspace);
+  addWorktreeContended(projectRoot, workspace, revision);
   const patch = execFileSync("git", ["diff", "--binary", "HEAD"], {
     cwd: projectRoot, encoding: "utf8", maxBuffer: 128 * 1024 * 1024, windowsHide: true,
   });
@@ -523,7 +621,13 @@ export async function runNextExecutorTask(input: {
   const inherited = task.workspace_path && existsSync(task.workspace_path)
     && existsSync(join(task.workspace_path, ".git")) ? task.workspace_path : null;
   let workspace: string;
-  try { workspace = inherited ?? createTaskWorkspace(input.projectRoot, `${task.task_id}-${researchId("ws")}`); }
+  const program = task.program_id ? input.store.db.prepare(
+    "SELECT current_revision FROM artifact_programs WHERE program_id=? AND status='active'",
+  ).get(task.program_id) as { current_revision: string } | undefined : undefined;
+  try {
+    workspace = inherited ?? createTaskWorkspace(input.projectRoot, `${task.task_id}-${researchId("ws")}`,
+      program?.current_revision ?? "HEAD");
+  }
   catch (error) {
     input.store.db.prepare("UPDATE tasks SET state='blocked',updated_at=? WHERE task_id=?")
       .run(researchNow(), task.task_id);
@@ -534,6 +638,9 @@ export async function runNextExecutorTask(input: {
     .run(workspace, researchNow(), task.task_id);
   const prompt = [
     task.brief_md,
+    renderDomainContract(input.store.direction(input.directionId)!, task.program_id
+      ? input.store.db.prepare("SELECT * FROM artifact_programs WHERE program_id=?").get(task.program_id) as ArtifactProgram
+      : null),
     renderPreflightMarkdown(preflightFacts(input.projectRoot)),
     resumeContext(workspace, priors, attempt),
   ].filter(Boolean).join("\n\n");

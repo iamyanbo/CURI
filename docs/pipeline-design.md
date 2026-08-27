@@ -22,6 +22,22 @@ the exact outcome and source identifiers that support it. These revisions are
 tentative until a human accepts them. This is the digestion boundary: abundant
 experiments do not become durable knowledge merely because they completed.
 
+## Research-driven artifact programs
+
+An isolated experiment remains a task artifact. When a question requires a
+substantial reusable implementation, the orchestrator starts one artifact
+program for the direction. Program-linked tasks branch from its latest accepted
+Git checkpoint, so architectural work can accumulate across milestones without
+turning every higher metric into a new incumbent.
+
+A checkpoint is admitted only after the executor's decisive checks have been
+rerun independently and all pass. The orchestrator must justify the checkpoint
+as a coherent, reusable capability; metric improvement alone is insufficient.
+Exploratory patches can remain evidence without entering the program lineage.
+The immutable domain contract and current program thesis are injected into
+both roles, so scientific constraints do not depend on being copied into every
+task brief.
+
 ## Research rather than hill climbing
 
 The governing principle is: **not every study should use the same evaluator.**

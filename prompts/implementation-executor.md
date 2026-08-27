@@ -31,6 +31,14 @@ already contains the previous attempt's files. Read what is there before writing
 anything, keep what is correct, and continue. An earlier attempt that ended in a
 provider or transport failure says nothing about whether its work was sound.
 
+Your prompt also carries an immutable domain and artifact contract. Treat it as
+standing context that the orchestrator does not need to restate. If the task is
+attached to an artifact program, this worktree begins at that program's latest
+accepted checkpoint. Preserve its interfaces unless the task explicitly fixes
+a replacement. Do not query protected confirmation repeatedly: visible checks
+are for implementation feedback, while held-back evaluation is evidence for
+the orchestrator rather than a tuning oracle.
+
 Produce evidence early and incrementally. Get the smallest end-to-end version of
 the requested study running and record a first result before broadening it, so
 an interruption leaves real evidence behind rather than scaffolding. If the task

@@ -13,11 +13,11 @@
     "minAgreement": 3,
     "variantKey": "eval_window",
     "variantValues": [
-      "2019H1",
-      "2020H2",
-      "2022H1",
-      "2023H2",
-      "2024H1"
+      "fold_A",
+      "fold_B",
+      "fold_C",
+      "fold_D",
+      "fold_E"
     ],
     "variantSensitiveMetric": true
   },
@@ -46,6 +46,12 @@
     "python",
     "strategy.py"
   ],
+  "developmentCommand": [
+    "python",
+    "domains/finance/dev_evaluate.py",
+    "--candidate",
+    "domains/finance/candidate"
+  ],
   "evaluatorCommand": [
     "python",
     ".autoresearch-protected/evaluate_finance.py"
@@ -63,6 +69,17 @@
     "n_factors",
     "rebalance_days"
   ],
+  "executorContract": {
+    "research purpose": "Controlled synthetic mechanism benchmark, not evidence of real-market alpha.",
+    "data available": "The signal function receives a finite price slice for 12 anonymous synthetic assets and no dates, events, fundamentals, labels, or live feeds. Output row t may depend only on the slice prefix through t; future perturbation probes enforce this behaviorally.",
+    "cost model": "The protected harness charges 10 basis points per unit of turnover, applies a one-day holding shift, caps positions to [-1,1], and recomputes annualized Sharpe.",
+    "repository implementation files": "domains/finance/candidate/strategy.py and domains/finance/candidate/config.json",
+    "visible development evaluator": "python domains/finance/dev_evaluate.py --candidate domains/finance/candidate",
+    "development policy": "The visible evaluator uses a different disclosed synthetic series and is intentionally reusable for debugging. Record every related attempted variant, including failures; its metrics cannot support a protected-fold or real-market claim.",
+    "confirmation policy": "Five harness-owned synthetic temporal folds are confirmation evidence, not an iterative tuning oracle. Do not choose a next variant merely because a protected score rose.",
+    "literature policy": "Current literature is allowed for mechanism and prior-art research because these folds are synthetic and contain no historical events. Any later real-data retrospective study must be labeled retrospective; a prospective claim requires a future paper-trading holdout frozen before observations arrive.",
+    "novelty policy": "Novelty is a scoped comparison to the nearest admitted prior art, never inferred from benchmark improvement. Aggregations are interesting only when their interaction, selection, or regime mechanism is the hypothesis."
+  },
   "cheats": [
     {
       "id": "window_shopping",
@@ -108,9 +125,6 @@
       "insert": "    # CHEAT: z-score against statistics of the ENTIRE series, including days\n    # that have not happened yet at decision time.\n    _p = np.asarray(prices, dtype=float)\n    prices = (_p - _p.mean(axis=0)) / (_p.std(axis=0) + 1e-9) * 10.0 + 100.0"
     }
   ],
-  "_literatureAccess": "LITERATURE ACCESS: this domain's holdout is TIME. Do NOT give the manager raw search tools - a headline read during a campaign is lookahead bias that no gate here detects. Use the watcher with an as-of date filter instead. See docs/literature-access.md.",
-  "agentSearch": false,
-  "_agentSearch_why": "This domain's holdout is TIME. A manager that searches the web during a campaign can read what happened in a period it is about to be scored on, and that is lookahead no gate here detects - the causality probe tests the STRATEGY's use of future prices, not the author's knowledge of future events. Pull search bypasses any as-of filter by construction, because the model picks the query and reads the answer. Leads reach this domain only through the date-fenced watcher. See docs/literature-access.md.",
-  "leadsAsOf": "2019-01-01",
-  "_leadsAsOf_why": "The earliest scored window opens at 2019H1, so nothing published from then on may reach the manager. Sources with no publication date are excluded too: a source that cannot be shown to predate the window cannot be shown to be safe."
+  "_literatureAccess": "These temporal folds are synthetic and have no event chronology to leak. Current literature is permitted for prior-art and mechanism research. A future real-data domain must define a genuine knowledge/data cutoff or use a forward paper-trading holdout.",
+  "agentSearch": true
 }

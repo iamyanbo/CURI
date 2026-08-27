@@ -88,11 +88,27 @@ CREATE TABLE watcher_cursors (
   PRIMARY KEY(direction_id,provider,query_hash)
 );
 
+CREATE TABLE artifact_programs (
+  program_id TEXT PRIMARY KEY,
+  direction_id TEXT NOT NULL REFERENCES directions(direction_id),
+  title TEXT NOT NULL,
+  thesis_md TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed','abandoned')),
+  base_revision TEXT NOT NULL,
+  current_revision TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX one_active_program_per_direction ON artifact_programs(direction_id)
+WHERE status='active';
+
 CREATE TABLE tasks (
   task_id TEXT PRIMARY KEY,
   direction_id TEXT NOT NULL REFERENCES directions(direction_id),
   parent_task_id TEXT REFERENCES tasks(task_id),
   component_id TEXT REFERENCES components(component_id),
+  program_id TEXT REFERENCES artifact_programs(program_id),
   mode TEXT NOT NULL CHECK(mode IN ('exploration','claim')),
   task_kind TEXT NOT NULL DEFAULT 'research',
   brief_md TEXT NOT NULL,
@@ -167,6 +183,16 @@ CREATE TABLE outcomes (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE program_checkpoints (
+  checkpoint_id TEXT PRIMARY KEY,
+  program_id TEXT NOT NULL REFERENCES artifact_programs(program_id),
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  revision TEXT NOT NULL,
+  summary_md TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(program_id,revision)
+);
+
 CREATE TABLE notes (
   note_id TEXT PRIMARY KEY,
   direction_id TEXT NOT NULL REFERENCES directions(direction_id),
@@ -228,6 +254,8 @@ CREATE TABLE events (
 
 CREATE INDEX sources_queue ON sources(direction_id,state,created_at);
 CREATE INDEX tasks_direction ON tasks(direction_id,state,created_at);
+CREATE INDEX programs_direction ON artifact_programs(direction_id,status,created_at);
+CREATE INDEX checkpoints_program ON program_checkpoints(program_id,created_at);
 CREATE INDEX runs_direction ON runs(direction_id,state,started_at);
 CREATE INDEX events_direction ON events(direction_id,seq);
 CREATE INDEX syntheses_direction ON component_syntheses(direction_id,component_id,created_at);
@@ -248,6 +276,10 @@ CREATE TRIGGER immutable_artifact_update BEFORE UPDATE ON artifacts BEGIN
   SELECT RAISE(ABORT,'artifacts are append-only'); END;
 CREATE TRIGGER immutable_artifact_delete BEFORE DELETE ON artifacts BEGIN
   SELECT RAISE(ABORT,'artifacts are append-only'); END;
+CREATE TRIGGER immutable_program_checkpoint_update BEFORE UPDATE ON program_checkpoints BEGIN
+  SELECT RAISE(ABORT,'program checkpoints are append-only'); END;
+CREATE TRIGGER immutable_program_checkpoint_delete BEFORE DELETE ON program_checkpoints BEGIN
+  SELECT RAISE(ABORT,'program checkpoints are append-only'); END;
 CREATE TRIGGER immutable_synthesis_update BEFORE UPDATE ON component_syntheses BEGIN
   SELECT RAISE(ABORT,'syntheses are append-only'); END;
 CREATE TRIGGER immutable_synthesis_delete BEFORE DELETE ON component_syntheses BEGIN

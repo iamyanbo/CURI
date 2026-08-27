@@ -67,13 +67,13 @@ TRAIN_END = 2200
 # is a slice of the held-back region: a strategy that only works in one regime
 # is exactly what this domain exists to catch.
 EVAL_WINDOWS = {
-    "2019H1": (2200, 2400),
-    "2020H2": (2400, 2600),
-    "2022H1": (2600, 2800),
-    "2023H2": (2800, 3000),
-    "2024H1": (3000, 3200),
+    "fold_A": (2200, 2400),
+    "fold_B": (2400, 2600),
+    "fold_C": (2600, 2800),
+    "fold_D": (2800, 3000),
+    "fold_E": (3000, 3200),
 }
-DEFAULT_WINDOW = "2019H1"
+DEFAULT_WINDOW = "fold_A"
 
 # Realistic round-trip cost. A strategy that trades every day must beat this.
 COST_PER_TURNOVER = 0.0010          # 10 bps
@@ -182,28 +182,35 @@ def causality_violation(fn, prices: np.ndarray) -> str | None:
     step ahead or only in one region. Any difference before the cut is decisive:
     the past cannot depend on the future.
     """
-    base = prices[:1400].copy()
-    ref = np.asarray(fn(base.copy()), dtype=float)
-    if ref.ndim == 1:
-        ref = np.repeat(ref[:, None], base.shape[1], axis=1)
-
     rng = np.random.default_rng(7)
-    for cut in (700, 1000, 1300):
-        perturbed = base.copy()
-        # Replace the future with a different but plausible path.
-        shock = rng.normal(1.0, 0.05, perturbed[cut:].shape)
-        perturbed[cut:] = perturbed[cut:] * shock
+    probes = [("long_history", prices[:1400].copy(), (700, 1000, 1300))]
+    # Also probe the exact input lengths and price regimes used for scoring. A
+    # candidate could otherwise behave causally only on the longer generic
+    # probe and enable a lookahead path when handed a 400-row evaluation view.
+    for name, (lo, hi) in EVAL_WINDOWS.items():
+        start = max(0, lo - 200)
+        probes.append((name, prices[start:hi].copy(), (120, 260, 360)))
 
-        out = np.asarray(fn(perturbed.copy()), dtype=float)
-        if out.ndim == 1:
-            out = np.repeat(out[:, None], base.shape[1], axis=1)
-        if out.shape != ref.shape:
-            return f"signal changed shape when future data changed ({out.shape} vs {ref.shape})"
+    for label, base, cuts in probes:
+        ref = np.asarray(fn(base.copy()), dtype=float)
+        if ref.ndim == 1:
+            ref = np.repeat(ref[:, None], base.shape[1], axis=1)
+        for cut in cuts:
+            perturbed = base.copy()
+            # Replace the future with a different but plausible path.
+            shock = rng.normal(1.0, 0.05, perturbed[cut:].shape)
+            perturbed[cut:] = perturbed[cut:] * shock
 
-        diff = np.nanmax(np.abs(out[:cut] - ref[:cut]))
-        if np.isfinite(diff) and diff > 1e-9:
-            return (f"positions BEFORE index {cut} changed by up to {diff:.3e} when only data "
-                    f"AFTER {cut} was altered - the strategy is reading the future")
+            out = np.asarray(fn(perturbed.copy()), dtype=float)
+            if out.ndim == 1:
+                out = np.repeat(out[:, None], base.shape[1], axis=1)
+            if out.shape != ref.shape:
+                return f"signal changed shape in {label} when future data changed ({out.shape} vs {ref.shape})"
+
+            diff = np.nanmax(np.abs(out[:cut] - ref[:cut]))
+            if np.isfinite(diff) and diff > 1e-9:
+                return (f"positions BEFORE index {cut} in {label} changed by up to {diff:.3e} when only data "
+                        f"AFTER {cut} was altered - the strategy is reading the future")
     return None
 
 

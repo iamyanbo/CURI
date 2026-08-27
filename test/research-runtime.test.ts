@@ -7,7 +7,10 @@ import { checkSynthesis } from "../src/research/delegation.js";
 
 import Database from "better-sqlite3";
 
-import { antiHillClimbInvariantSource, applyOrchestratorActions } from "../src/research/orchestrator.js";
+import {
+  antiHillClimbInvariantSource, applyOrchestratorActions, renderDomainContract,
+} from "../src/research/orchestrator.js";
+import { createWorktree, ensureRepo, git, removeWorktree } from "../src/core/workspace.js";
 import {
   continuousFile, continuousMode, costCeilingFile, directionSpendUsd, idleBackoffMs,
   reconcileSupervisorState, researchCostCeiling,
@@ -24,13 +27,14 @@ function fixture() {
   return { root, store };
 }
 
-test("lean store contains no program, study, protocol, claim, or notebook machinery", () => {
+test("lean store keeps artifact programs without restoring legacy research bureaucracy", () => {
   const { root, store } = fixture();
   try {
     const tables = (store.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>).map(x => x.name);
     for (const removed of ["research_programs", "studies", "protocols", "claims", "researcher_notebook",
       "implementation_packets", "assemblies", "evidence_items"]) assert.ok(!tables.includes(removed), removed);
-    for (const kept of ["directions", "sources", "components", "tasks", "runs", "commands", "artifacts", "outcomes", "events"])
+    for (const kept of ["directions", "sources", "components", "tasks", "runs", "commands", "artifacts",
+      "artifact_programs", "program_checkpoints", "outcomes", "events"])
       assert.ok(tables.includes(kept), kept);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
@@ -171,6 +175,11 @@ test("v6 research databases migrate in place with a recoverable backup", () => {
   original.close();
   const legacy = new Database(path);
   legacy.exec(`
+    DROP TRIGGER immutable_program_checkpoint_delete;
+    DROP TRIGGER immutable_program_checkpoint_update;
+    DROP TABLE program_checkpoints;
+    ALTER TABLE tasks DROP COLUMN program_id;
+    DROP TABLE artifact_programs;
     DROP TRIGGER immutable_synthesis_review_delete;
     DROP TRIGGER immutable_synthesis_review_update;
     DROP TRIGGER immutable_synthesis_delete;
@@ -391,9 +400,20 @@ test("a schema migration refuses to run while other daemons are live", () => {
   const path = join(root, "research.sqlite");
   const created = ResearchStore.open(path);
   created.close();
-  const legacy = new Database(path);
-  legacy.exec("DELETE FROM research_schema_meta WHERE version > 8; INSERT OR REPLACE INTO research_schema_meta(version,applied_at,checksum) VALUES (8,'legacy','legacy');");
-  legacy.close();
+  const makeV9 = () => {
+    const db = new Database(path);
+    db.exec(`
+      DROP TRIGGER immutable_program_checkpoint_delete;
+      DROP TRIGGER immutable_program_checkpoint_update;
+      DROP TABLE program_checkpoints;
+      ALTER TABLE tasks DROP COLUMN program_id;
+      DROP TABLE artifact_programs;
+      DELETE FROM research_schema_meta WHERE version > 9;
+      INSERT OR REPLACE INTO research_schema_meta(version,applied_at,checksum) VALUES (9,'legacy','legacy');
+    `);
+    db.close();
+  };
+  makeV9();
   // A pid file naming this process: unquestionably alive, and not our own pid
   // from the store's point of view only if it differs, so use the parent shell's
   // check indirectly by writing our own and asserting the exclusion instead.
@@ -403,9 +423,7 @@ test("a schema migration refuses to run while other daemons are live", () => {
 
   // A different live pid does block it.
   writeFileSync(join(root, "research-dashboard-direction.pid"), String(process.ppid), "utf8");
-  const stale = new Database(path);
-  stale.exec("DELETE FROM research_schema_meta WHERE version > 8; INSERT OR REPLACE INTO research_schema_meta(version,applied_at,checksum) VALUES (8,'legacy','legacy');");
-  stale.close();
+  makeV9();
   assert.throws(() => ResearchStore.open(path), /refusing to migrate the research database/);
   rmSync(root, { recursive: true, force: true });
 });
@@ -527,4 +545,55 @@ test("a paused direction is resumed by evidence, not by a timer", () => {
   // And the watcher is what makes that possible: an admitted source is progress.
   const list = source.slice(source.indexOf("const PROGRESS_EVENTS"), source.indexOf("] as const;", source.indexOf("const PROGRESS_EVENTS")));
   assert.ok(list.includes("source.relevant"));
+});
+
+test("program-linked tasks inherit durable context and validated work can checkpoint", () => {
+  const root = mkdtempSync(join(tmpdir(), "lean-program-wire-"));
+  const repo = join(root, "repo");
+  const worktrees = join(root, "external-worktrees");
+  let workspace = "";
+  try {
+    const baseline = ensureRepo(repo, (dir) => {
+      writeFileSync(join(dir, "strategy.py"), "print('baseline')\n", "utf8");
+      writeFileSync(join(dir, "domain.json"), JSON.stringify({ id: "finance", candidateFiles: ["strategy.py"],
+        metric: { name: "sharpe", direction: "maximize" }, executorContract: { purpose: "synthetic only" } }), "utf8");
+    });
+    const store = ResearchStore.open(join(root, "research.sqlite"));
+    try {
+      store.createDirection({ id: "direction", title: "Direction", briefMarkdown: "Build and study.",
+        constraintsMarkdown: "", domainPath: join(repo, "domain.json") });
+      const programId = store.startProgram("direction", "# Regime selector\n\nNearest prior art and milestones.", baseline);
+      const taskId = store.delegateTask({ directionId: "direction", mode: "exploration",
+        markdown: `# Implement selector\n\nContinue ${programId} and add a tested interface.` });
+      const task = store.context("direction").tasks[0]!;
+      assert.equal(task.program_id, programId);
+      const contract = renderDomainContract(store.direction("direction")!, store.context("direction").programs[0]!);
+      assert.match(contract, /synthetic only/);
+      assert.match(contract, new RegExp(programId));
+
+      workspace = createWorktree(repo, worktrees, "task", baseline);
+      writeFileSync(join(workspace, "strategy.py"), "print('checkpoint')\n", "utf8");
+      store.db.prepare("UPDATE tasks SET state='awaiting_orchestrator',workspace_path=? WHERE task_id=?")
+        .run(workspace, taskId);
+      const executorRun = store.beginRun({ directionId: "direction", taskId, role: "executor", inputMarkdown: "build" });
+      store.finishRun({ runId: executorRun, state: "succeeded", outputMarkdown: "implemented" });
+      store.db.prepare(
+        `INSERT INTO commands(command_id,direction_id,task_id,run_id,kind,executable,args_json,exit_code,stdout,stderr,duration_ms,created_at)
+         VALUES ('CMD-pass','direction',?,?,'verification','python','[]',0,'ok','',1,?)`,
+      ).run(taskId, executorRun, new Date().toISOString());
+      const orchestratorRun = store.beginRun({ directionId: "direction", role: "orchestrator", inputMarkdown: "interpret" });
+      applyOrchestratorActions(store, "direction", orchestratorRun, [
+        { name: "record_bounded", markdown: "Implemented and checked, but performance remains untested.", atMs: 1 },
+        { name: "checkpoint_program", markdown: "# Working selector interface\n\nReusable implementation; promoted for correctness, not score.", atMs: 2 },
+      ], repo);
+      const context = store.context("direction");
+      assert.equal(context.programCheckpoints.length, 1);
+      assert.notEqual(context.programs[0]!.current_revision, baseline);
+      assert.equal(git(["show", `${context.programs[0]!.current_revision}:strategy.py`], repo), "print('checkpoint')");
+      assert.equal(context.outcomes.length, 1);
+    } finally { store.close(); }
+  } finally {
+    if (workspace) removeWorktree(repo, workspace);
+    rmSync(root, { recursive: true, force: true });
+  }
 });

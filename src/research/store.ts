@@ -8,12 +8,12 @@ import Database from "better-sqlite3";
 import { briefSimilarity } from "./delegation.js";
 
 import type {
-  LeanDirection, LeanSource, LeanTask, OutcomeVerdict, ResearchContext,
+  ArtifactProgram, LeanDirection, LeanSource, LeanTask, OutcomeVerdict, ResearchContext,
   ResearchDirectionInput, RunRole, RunState, SourceState, TaskMode,
 } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const RESEARCH_SCHEMA_VERSION = 9;
+export const RESEARCH_SCHEMA_VERSION = 10;
 
 const V7_MIGRATION = `
 ALTER TABLE tasks ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'research';
@@ -85,6 +85,38 @@ DELETE FROM component_relations WHERE relation_id NOT IN (
   WHERE rank = 1);
 CREATE UNIQUE INDEX IF NOT EXISTS component_relations_pair
   ON component_relations(direction_id, from_component_id, to_component_id);
+`;
+
+const V10_MIGRATION = `
+CREATE TABLE artifact_programs (
+  program_id TEXT PRIMARY KEY,
+  direction_id TEXT NOT NULL REFERENCES directions(direction_id),
+  title TEXT NOT NULL,
+  thesis_md TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','completed','abandoned')),
+  base_revision TEXT NOT NULL,
+  current_revision TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX one_active_program_per_direction ON artifact_programs(direction_id)
+WHERE status='active';
+ALTER TABLE tasks ADD COLUMN program_id TEXT REFERENCES artifact_programs(program_id);
+CREATE TABLE program_checkpoints (
+  checkpoint_id TEXT PRIMARY KEY,
+  program_id TEXT NOT NULL REFERENCES artifact_programs(program_id),
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  revision TEXT NOT NULL,
+  summary_md TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(program_id,revision)
+);
+CREATE INDEX programs_direction ON artifact_programs(direction_id,status,created_at);
+CREATE INDEX checkpoints_program ON program_checkpoints(program_id,created_at);
+CREATE TRIGGER immutable_program_checkpoint_update BEFORE UPDATE ON program_checkpoints BEGIN
+  SELECT RAISE(ABORT,'program checkpoints are append-only'); END;
+CREATE TRIGGER immutable_program_checkpoint_delete BEFORE DELETE ON program_checkpoints BEGIN
+  SELECT RAISE(ABORT,'program checkpoints are append-only'); END;
 `;
 
 /**
@@ -168,7 +200,7 @@ export class ResearchStore {
       }
     }
     for (const step of [{ from: 6, to: 7, sql: V7_MIGRATION }, { from: 7, to: 8, sql: V8_MIGRATION },
-      { from: 8, to: 9, sql: V9_MIGRATION }]) {
+      { from: 8, to: 9, sql: V9_MIGRATION }, { from: 9, to: 10, sql: V10_MIGRATION }]) {
       if (current !== step.from) continue;
       db.pragma("wal_checkpoint(TRUNCATE)");
       const backup = `${path}.v${step.from}.bak`;
@@ -389,19 +421,65 @@ ${item.description_md ?? ""}`) >= 0.75) return null;
     return id;
   }
 
+  startProgram(directionId: string, markdown: string, baseRevision: string): string {
+    const active = this.db.prepare(
+      "SELECT program_id FROM artifact_programs WHERE direction_id=? AND status='active'",
+    ).get(directionId) as { program_id: string } | undefined;
+    if (active) throw new Error(`direction already has active program ${active.program_id}`);
+    if (!/^[a-f0-9]{40,64}$/i.test(baseRevision)) throw new Error("program base must be a git revision");
+    const id = researchId("PROG");
+    const now = researchNow();
+    this.db.prepare(
+      `INSERT INTO artifact_programs(program_id,direction_id,title,thesis_md,status,base_revision,current_revision,created_at,updated_at)
+       VALUES (?,?,?,?,'active',?,?,?,?)`,
+    ).run(id, directionId, titleFromMarkdown(markdown, "Artifact program"), markdown,
+      baseRevision, baseRevision, now, now);
+    this.appendEvent(directionId, null, "program.started", "orchestrator", `${id}\n${markdown}`);
+    return id;
+  }
+
+  checkpointProgram(input: {
+    directionId: string; programId: string; taskId: string; revision: string; markdown: string;
+  }): string {
+    const program = this.db.prepare(
+      "SELECT status FROM artifact_programs WHERE program_id=? AND direction_id=?",
+    ).get(input.programId, input.directionId) as { status: string } | undefined;
+    if (!program || program.status !== "active") throw new Error("checkpoint requires an active program in this direction");
+    const task = this.db.prepare(
+      "SELECT program_id FROM tasks WHERE task_id=? AND direction_id=?",
+    ).get(input.taskId, input.directionId) as { program_id: string | null } | undefined;
+    if (!task || task.program_id !== input.programId) throw new Error("checkpoint task is not part of this program");
+    const id = researchId("CHK");
+    const now = researchNow();
+    this.transact((store) => {
+      store.db.prepare(
+        "INSERT INTO program_checkpoints(checkpoint_id,program_id,task_id,revision,summary_md,created_at) VALUES (?,?,?,?,?,?)",
+      ).run(id, input.programId, input.taskId, input.revision, input.markdown, now);
+      store.db.prepare("UPDATE artifact_programs SET current_revision=?,updated_at=? WHERE program_id=?")
+        .run(input.revision, now, input.programId);
+      store.appendEvent(input.directionId, input.taskId, "program.checkpointed", "orchestrator",
+        `${id} ${input.revision}\n${input.markdown}`);
+    });
+    return id;
+  }
+
   delegateTask(input: { directionId: string; mode: TaskMode; markdown: string; parentTaskId?: string | null }): string {
     if (!input.markdown.trim()) throw new Error("experiment Markdown is empty");
     const mentionedComponent = input.markdown.match(/\bCOMP-[0-9a-f-]{8,}\b/i)?.[0] ?? null;
     const component = mentionedComponent && this.db.prepare(
       "SELECT 1 FROM components WHERE component_id=? AND direction_id=?",
     ).get(mentionedComponent, input.directionId) ? mentionedComponent : null;
+    const mentionedProgram = input.markdown.match(/\bPROG-[0-9a-f-]{8,}\b/i)?.[0] ?? null;
+    const program = mentionedProgram && this.db.prepare(
+      "SELECT 1 FROM artifact_programs WHERE program_id=? AND direction_id=? AND status='active'",
+    ).get(mentionedProgram, input.directionId) ? mentionedProgram : null;
     const id = researchId("TASK");
     const now = researchNow();
     this.transact((store) => {
       store.db.prepare(
-        `INSERT INTO tasks(task_id,direction_id,parent_task_id,component_id,mode,task_kind,brief_md,state,created_at,updated_at)
-         VALUES (?,?,?,?,?,'research',?,'queued',?,?)`,
-      ).run(id, input.directionId, input.parentTaskId ?? null, component, input.mode, input.markdown, now, now);
+        `INSERT INTO tasks(task_id,direction_id,parent_task_id,component_id,program_id,mode,task_kind,brief_md,state,created_at,updated_at)
+         VALUES (?,?,?,?,?,?,'research',?,'queued',?,?)`,
+      ).run(id, input.directionId, input.parentTaskId ?? null, component, program, input.mode, input.markdown, now, now);
       const known = store.db.prepare("SELECT source_id FROM sources WHERE direction_id=?").all(input.directionId) as
         Array<{ source_id: string }>;
       for (const { source_id } of known) if (input.markdown.includes(source_id)) {
@@ -509,6 +587,10 @@ ${item.description_md ?? ""}`) >= 0.75) return null;
       componentRelations: all("SELECT * FROM component_relations WHERE direction_id=? ORDER BY created_at", directionId),
       sources: all<LeanSource>("SELECT * FROM sources WHERE direction_id=? ORDER BY updated_at DESC", directionId),
       tasks: all<LeanTask>("SELECT * FROM tasks WHERE direction_id=? ORDER BY created_at DESC", directionId),
+      programs: all<ArtifactProgram>("SELECT * FROM artifact_programs WHERE direction_id=? ORDER BY created_at DESC", directionId),
+      programCheckpoints: all(
+        `SELECT pc.* FROM program_checkpoints pc JOIN artifact_programs p ON p.program_id=pc.program_id
+         WHERE p.direction_id=? ORDER BY pc.created_at DESC`, directionId),
       outcomes: all("SELECT * FROM outcomes WHERE direction_id=? ORDER BY created_at DESC", directionId),
       runs: all("SELECT * FROM runs WHERE direction_id=? ORDER BY started_at DESC LIMIT 200", directionId),
       commands: all("SELECT * FROM commands WHERE direction_id=? ORDER BY created_at DESC LIMIT 200", directionId),

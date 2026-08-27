@@ -47,11 +47,24 @@ export interface LeanTask {
   direction_id: string;
   parent_task_id: string | null;
   component_id: string | null;
+  program_id: string | null;
   mode: TaskMode;
   task_kind: string;
   brief_md: string;
   state: TaskState;
   workspace_path: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ArtifactProgram {
+  program_id: string;
+  direction_id: string;
+  title: string;
+  thesis_md: string;
+  status: "active" | "paused" | "completed" | "abandoned";
+  base_revision: string;
+  current_revision: string;
   created_at: string;
   updated_at: string;
 }
@@ -62,6 +75,8 @@ export interface ResearchContext {
   componentRelations: Array<Record<string, unknown>>;
   sources: LeanSource[];
   tasks: LeanTask[];
+  programs: ArtifactProgram[];
+  programCheckpoints: Array<Record<string, unknown>>;
   outcomes: Array<Record<string, unknown>>;
   runs: Array<Record<string, unknown>>;
   commands: Array<Record<string, unknown>>;

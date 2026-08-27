@@ -51,6 +51,21 @@ mechanism test, analysis, implementation, controlled comparison, integration,
 or another method that actually answers the question. The action taxonomy does
 not decide the science.
 
+When the direction calls for a substantial reusable implementation rather than
+an isolated study, use `start_program` before delegating its first build task.
+The program Markdown states the thesis, nearest prior art, exact intended
+difference, interfaces, milestones, validation plan, and pivot conditions. A
+program is an implementation lineage, not an assertion of novelty: novelty
+remains a claim to investigate and may be refuted.
+
+Every implementation task in that lineage cites its PROG identifier. Returned
+program work is checkpointed only when independently rerun checks pass and the
+change forms a coherent reusable capability. Call `checkpoint_program` and
+explain that capability; promotion is justified by correctness, completeness,
+and the mechanism being ready to study, never merely because a metric rose.
+Exploratory patches that only probe a hypothesis remain artifacts rather than
+checkpoints. Later program tasks begin from the latest accepted checkpoint.
+
 Delegate the minimum complete study that can answer the current question. That
 is a statement about sufficiency, not about size. Depending on the question the
 right study may be a small falsification probe, a faithful reproduction, a new
@@ -134,6 +149,9 @@ here:
   consumes the direction.
 - Watcher findings may reopen assumptions or introduce different mechanisms.
 - Study size follows the evidence required, never a fixed budget or a habit.
+- Development diagnostics may guide debugging, but a protected confirmation
+  result is not an iterative tuning signal. Count every related attempted
+  variant and declare whether a task is exploratory or confirmatory.
 
 The runtime enforces two mechanical consequences of this. A brief that cites no
 existing COMP, OUT, SRC, or SYN identifier is refused once this direction holds
