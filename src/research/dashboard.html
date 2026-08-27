@@ -154,7 +154,18 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .node text{fill:var(--text);font:12.5px var(--sans);pointer-events:none}
 .node text.sub{fill:var(--text-3);font-size:10.5px}
 .edge{stroke:var(--line-2);stroke-width:1.4;fill:none;marker-end:url(#arrow)}
-.edge-label{fill:var(--text-3);font:10px var(--mono)}
+.edge{transition:stroke .15s,stroke-width .15s}
+.edge.on{stroke:var(--accent);stroke-width:2.4;marker-end:url(#arrow-on)}
+#relations{padding:0 var(--s4) var(--s4)}
+.rel-head{padding:var(--s3) 0 var(--s2);text-transform:uppercase;letter-spacing:.08em}
+.rel{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px;cursor:pointer;
+  background:var(--bg-2);transition:border-color .15s,background .15s}
+.rel:hover,.rel.on{border-color:var(--accent);background:var(--bg-3)}
+.rel-pair{color:var(--text-3);margin-bottom:4px}
+.rel-pair b{color:var(--text-1);font-weight:600}
+.rel-arrow{color:var(--accent);padding:0 4px}
+.rel-claim{font-size:13px;line-height:1.5;color:var(--text-2)}
+.rel-body{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:13px}
 
 .legend{display:flex;gap:var(--s4);flex-wrap:wrap;padding:var(--s2) var(--s4);border-bottom:1px solid var(--line)}
 .legend span{font:11px/1.4 var(--mono);color:var(--text-3)}
@@ -252,6 +263,7 @@ details summary{cursor:pointer;font:11px var(--mono);color:var(--text-3);padding
       <div class="head"><h2>Component system</h2><span id="graph-note" class="t-meta"></span></div>
       <div id="graph-empty"></div>
       <svg id="graph" preserveAspectRatio="xMidYMin meet"></svg>
+      <div id="relations"></div>
     </div>
     <div class="card">
       <div class="head"><h2 id="comp-detail-title">Thread detail</h2><span id="comp-detail-note" class="t-meta"></span></div>
@@ -574,39 +586,120 @@ function understanding(){
   syn.forEach(s=>prose(host.querySelector('[data-md="'+s.synthesis_id+'"]'),stripLeadingHeading(s.body_md)));
 }
 
-/* --- components: a graph, because threads relate to each other --- */
+/* --- components: a graph of threads, and what each connection claims --- */
+/**
+ * The orchestrator opens a relationship with bookkeeping — "`COMP-a` -> `COMP-b`",
+ * sometimes under a heading — before saying anything. Labelling an edge with the
+ * first line therefore drew a truncated identifier and nothing else. The claim is
+ * what matters, so the identifiers are stripped and the heading, or the first
+ * real sentence, becomes the label.
+ */
+function relationClaim(md){
+  const lines=String(md||'').split(/\r?\n/).map(l=>l.trim())
+    .filter(l=>l&&!/^`?COMP-[0-9a-f-]+`?\s*(->|→|relates to)\s*`?COMP-[0-9a-f-]+`?\.?:?$/i.test(l));
+  const heading=lines.find(l=>l.startsWith('#'));
+  if(heading)return heading.replace(/^#+\s*/,'');
+  const prose=lines.find(l=>!l.startsWith('#'))||'';
+  // A leading "`COMP-a` -> `COMP-b`:" prefix on an otherwise useful sentence.
+  const stripped=prose.replace(/^`?COMP-[0-9a-f-]+`?\s*(->|→|relates to)\s*`?COMP-[0-9a-f-]+`?\s*[:.]?\s*/i,'');
+  // Inline citations belong in the expanded body, not in a one-line summary:
+  // the row already names both threads, and a bare identifier conveys nothing
+  // at a glance. Stripped before the sentence is cut, so a citation's full stop
+  // cannot truncate the claim.
+  const clean=stripped
+    .replace(/\(\s*[`'"]?(?:COMP|OUT|SRC|SYN)-[0-9a-f-]+[`'"]?(?:\s*,\s*[`'"]?(?:COMP|OUT|SRC|SYN)-[0-9a-f-]+[`'"]?)*\s*\)/gi,'')
+    .replace(/[`'"]?(?:COMP|OUT|SRC|SYN)-[0-9a-f-]+[`'"]?/gi,'')
+    .replace(/\s{2,}/g,' ').replace(/\s+([.;,])/g,'$1').trim();
+  const sentence=(clean.match(/^.*?[.;](\s|$)/)||[clean])[0];
+  return sentence.trim()||'relationship recorded';
+}
+function clip(text,max){const t=String(text);return t.length>max?t.slice(0,max-1).replace(/\s+\S*$/,'')+'…':t}
 function components(){
   const comps=arr(S.components),svg=$('#graph'),rels=arr(S.componentRelations);
   $('#graph-note').textContent=comps.length?comps.length+' threads · '+rels.length+' relationships':'no components yet';
   $('#graph-empty').innerHTML=comps.length?''
     :'<div class="pad t-small">No component yet. A component is an optional named research thread that accumulates its own understanding across findings; the orchestrator creates one when a thread earns it.</div>';
-  const nodes=[{component_id:'__general',title:'Direction level'},...comps];
-  const boxW=250,boxH=52,gapX=70,gapY=26;
-  const cols=nodes.length<=3?1:2,rows=Math.ceil(nodes.length/cols);
-  const width=cols*boxW+(cols-1)*gapX,height=rows*(boxH+gapY)+gapY;
-  const pos=new Map();
-  nodes.forEach((n,i)=>{const col=i%cols,row=Math.floor(i/cols);
-    pos.set(n.component_id,{x:col*(boxW+gapX),y:row*(boxH+gapY)+gapY/2,w:boxW,h:boxH})});
-  svg.setAttribute('viewBox','0 0 '+width+' '+height);
-  svg.style.height=Math.min(460,height+16)+'px';
-  let html='<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">'
-    +'<path d="M0,0 L10,5 L0,10 z" fill="#2a3846"/></marker></defs>';
-  rels.forEach(e=>{
-    const a=pos.get(e.from_component_id),b=pos.get(e.to_component_id);if(!a||!b)return;
-    const ax=a.x+a.w/2,ay=a.y+a.h/2,bx=b.x+b.w/2,by=b.y+b.h/2;
-    html+=`<path class="edge" d="M${ax},${ay} C${(ax+bx)/2},${ay} ${(ax+bx)/2},${by} ${bx},${by}"/>`;
-    html+=`<text class="edge-label" x="${(ax+bx)/2}" y="${(ay+by)/2-6}" text-anchor="middle">${esc(String(e.relationship_md||'').split(/\r?\n/)[0].slice(0,28))}</text>`;
+  const nodes=[...comps,{component_id:'__general',title:'Direction level'}];
+  if(!nodes.length){svg.innerHTML='';$('#relations').innerHTML='';componentDetail();return}
+
+  // Threads are placed on a ring rather than a grid: every pair is then joined
+  // by its own arc instead of routing through the same crowded midpoints, and a
+  // reciprocal pair curves to opposite sides instead of overlapping.
+  const boxW=196,boxH=50,pad=30;
+  const n=nodes.length,radius=Math.max(150,44*n);
+  const width=radius*2+boxW+pad*2,height=radius*2+boxH+pad*2;
+  const cx=width/2,cy=height/2,pos=new Map();
+  nodes.forEach((node,i)=>{
+    const angle=-Math.PI/2+(i/n)*Math.PI*2;
+    pos.set(node.component_id,{x:cx+Math.cos(angle)*radius-boxW/2,y:cy+Math.sin(angle)*radius-boxH/2,w:boxW,h:boxH});
   });
-  nodes.forEach(n=>{const p=pos.get(n.component_id);
-    const ts=arr(S.tasks).filter(t=>(t.component_id||'__general')===n.component_id).length;
-    const sy=arr(S.syntheses).filter(s=>arr(s.componentIds).length?arr(s.componentIds).includes(n.component_id)
-      :(s.component_id||'__general')===n.component_id).length;
-    const label=String(n.title).length>30?String(n.title).slice(0,29)+'…':String(n.title);
-    html+=`<g class="node ${component===n.component_id?'active':''}" data-comp="${esc(n.component_id)}">
+  svg.setAttribute('viewBox','0 0 '+width+' '+height);
+  svg.style.height=Math.min(560,height)+'px';
+
+  let html='<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">'
+    +'<path d="M0,0 L10,5 L0,10 z" fill="var(--line-2)"/></marker>'
+    +'<marker id="arrow-on" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">'
+    +'<path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"/></marker></defs>';
+
+  const border=(box,tx,ty)=>{
+    // Where a line from the box centre toward (tx,ty) leaves the box.
+    const bx=box.x+box.w/2,by=box.y+box.h/2,dx=tx-bx,dy=ty-by;
+    const scale=Math.min(Math.abs(dx)>1e-6?(box.w/2)/Math.abs(dx):Infinity,
+                         Math.abs(dy)>1e-6?(box.h/2)/Math.abs(dy):Infinity);
+    return{x:bx+dx*scale,y:by+dy*scale};
+  };
+  rels.forEach((e,i)=>{
+    const a=pos.get(e.from_component_id),b=pos.get(e.to_component_id);if(!a||!b)return;
+    const acx=a.x+a.w/2,acy=a.y+a.h/2,bcx=b.x+b.w/2,bcy=b.y+b.h/2;
+    const from=border(a,bcx,bcy),to=border(b,acx,acy);
+    const mx=(from.x+to.x)/2,my=(from.y+to.y)/2;
+    // Bow each arc away from the straight line so a reciprocal pair separates.
+    const dx=to.x-from.x,dy=to.y-from.y,len=Math.hypot(dx,dy)||1,bow=Math.min(70,len*0.22);
+    const ctrlX=mx-(dy/len)*bow,ctrlY=my+(dx/len)*bow;
+    html+=`<path class="edge" data-rel="${i}" d="M${from.x.toFixed(1)},${from.y.toFixed(1)} Q${ctrlX.toFixed(1)},${ctrlY.toFixed(1)} ${to.x.toFixed(1)},${to.y.toFixed(1)}"/>`;
+  });
+
+  nodes.forEach(node=>{const p=pos.get(node.component_id);
+    const ts=arr(S.tasks).filter(t=>(t.component_id||'__general')===node.component_id).length;
+    const sy=arr(S.syntheses).filter(s=>arr(s.componentIds).length?arr(s.componentIds).includes(node.component_id)
+      :(s.component_id||'__general')===node.component_id).length;
+    const inbound=rels.filter(r=>r.to_component_id===node.component_id).length;
+    const outbound=rels.filter(r=>r.from_component_id===node.component_id).length;
+    const words=String(node.title).split(/\s+/);
+    const lines=[[],[]];
+    for(const word of words)(lines[0].join(' ').length+word.length<24?lines[0]:lines[1]).push(word);
+    html+=`<g class="node ${component===node.component_id?'active':''}" data-comp="${esc(node.component_id)}">
       <rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}" rx="9"/>
-      <text x="${p.x+14}" y="${p.y+22}">${esc(label)}</text>
-      <text class="sub" x="${p.x+14}" y="${p.y+39}">${sy} syntheses · ${ts} tasks</text></g>`});
+      <text x="${p.x+12}" y="${p.y+19}">${esc(clip(lines[0].join(' '),26))}</text>
+      ${lines[1].length?`<text x="${p.x+12}" y="${p.y+32}">${esc(clip(lines[1].join(' '),26))}</text>`:''}
+      <text class="sub" x="${p.x+12}" y="${p.y+44}">${sy} syntheses · ${ts} tasks · ${outbound}→ ${inbound}←</text></g>`});
   svg.innerHTML=html;
+
+  // The claims live in a list, not on the arcs: an arc has room for a truncated
+  // fragment, and a fragment of a research claim is worse than none.
+  $('#relations').innerHTML=rels.length?'<div class="rel-head t-meta">How these threads constrain each other</div>'
+    +rels.map((e,i)=>{
+      const from=nodes.find(x=>x.component_id===e.from_component_id),to=nodes.find(x=>x.component_id===e.to_component_id);
+      if(!from||!to)return '';
+      const open=expanded.has('rel:'+i);
+      return `<div class="rel ${open?'open':''}" data-rel-row="${i}">
+        <div class="rel-pair t-micro"><b>${esc(clip(from.title,30))}</b> <span class="rel-arrow">→</span> <b>${esc(clip(to.title,30))}</b></div>
+        <div class="rel-claim">${esc(relationClaim(e.relationship_md))}</div>
+        ${open?`<div class="rel-body">${renderMarkdown(String(e.relationship_md||''))}</div>`:''}
+      </div>`}).join('')
+    :'<div class="pad t-small">No relationships recorded yet. The orchestrator records one when a thread constrains, enables or contradicts another.</div>';
+
+  const focus=(index,on)=>{
+    const edge=svg.querySelector(`[data-rel="${index}"]`);if(edge)edge.classList.toggle('on',on);
+    const row=$('#relations').querySelector(`[data-rel-row="${index}"]`);if(row)row.classList.toggle('on',on);
+  };
+  svg.querySelectorAll('[data-rel]').forEach(el=>{
+    el.onmouseenter=()=>focus(el.dataset.rel,true);el.onmouseleave=()=>focus(el.dataset.rel,false);
+  });
+  $('#relations').querySelectorAll('[data-rel-row]').forEach(el=>{
+    el.onmouseenter=()=>focus(el.dataset.relRow,true);el.onmouseleave=()=>focus(el.dataset.relRow,false);
+    el.onclick=()=>{const key='rel:'+el.dataset.relRow;expanded.has(key)?expanded.delete(key):expanded.add(key);components()};
+  });
   svg.querySelectorAll('[data-comp]').forEach(el=>el.onclick=()=>{
     component=el.dataset.comp;invalidate('components');invalidate('understanding');invalidate('tasks');invalidate('roll');paint()});
   componentDetail();

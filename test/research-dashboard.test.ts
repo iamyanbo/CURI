@@ -104,3 +104,26 @@ test("the dashboard has a stop path, so stop --all means everything", () => {
   assert.match(shutdown, /requestedStop\(input\.projectRoot\)/);
   assert.match(shutdown, /clearInterval\(watch\)/);
 });
+
+test("a relationship label states the claim, not the identifiers", () => {
+  // The orchestrator opens a relationship with bookkeeping. Labelling an edge
+  // with the first line drew "COMP-acdf0c7f-2b9` -> `COMP" and nothing else.
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  const source = html.slice(html.indexOf("function relationClaim(md){"), html.indexOf("function components()"));
+  const relationClaim = new Function(`${source}; return relationClaim;`)() as (md: string) => string;
+
+  // A heading is the best summary the orchestrator writes.
+  assert.equal(
+    relationClaim("`COMP-a1b2c3` -> `COMP-d4e5f6`\n# Asymmetric Precision Enables Retention\n\nDetail follows."),
+    "Asymmetric Precision Enables Retention");
+  // Otherwise the first real sentence, with the pair prefix removed.
+  assert.equal(
+    relationClaim("`COMP-a1b2c3` -> `COMP-d4e5f6`: Eviction and quantization are complementary; more follows."),
+    "Eviction and quantization are complementary;");
+  // Inline citations are stripped rather than truncating the claim at their dot.
+  const cited = relationClaim("Speculation bypasses the crossover (`OUT-26b612f4-330`, `OUT-1032553e-994`), enabling the scheduler in `COMP-b0fb403e-5ba`.");
+  assert.doesNotMatch(cited, /COMP-|OUT-|SRC-|SYN-/);
+  assert.match(cited, /Speculation bypasses the crossover, enabling the scheduler/);
+  // A relationship with nothing but bookkeeping still yields a label.
+  assert.equal(relationClaim("`COMP-a1b2c3` relates to `COMP-d4e5f6`."), "relationship recorded");
+});
