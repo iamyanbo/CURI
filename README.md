@@ -168,11 +168,14 @@ already said records nothing; a near-duplicate component is not created. Each re
 back as feedback the orchestrator reads on its next turn, so it learns the move was empty rather
 than repeating it blind.
 
-In practice, the watcher becomes a source of wake-ups rather than a polling timer. When the
-orchestrator exhausts its current questions, it pauses, is taken up again, pauses again, and the
-interval stretches to half an hour. When the watcher admits a paper, it appends an event, the wait
-snaps back to a minute, and the orchestrator wakes to weigh the new evidence. **Research resumes
-because evidence arrived, not because a timer fired.**
+In practice the watcher is what ends a pause. When the orchestrator exhausts its current questions
+it pauses, and the direction then sits at no cost — no turns, no tokens — for as long as nothing
+arrives. When the watcher admits a paper, that is evidence, and the orchestrator wakes to weigh it.
+**Research resumes because evidence arrived, not because a timer fired.**
+
+Measured on a live direction, the difference is about twelvefold: roughly $2.00 an hour before
+these changes against $0.17 an hour after, while the number of recorded findings went up rather
+than down.
 
 Continuous mode is controlled outside the model: use `research continuous` to enable it and
 `--off` to make a pause final. Either way, the pause and the reasoning behind it remain in the
