@@ -240,6 +240,7 @@ Fill in whichever provider you have a key for. `AR_MODEL` selects the model on a
 | `gemini-api` | `GEMINI_API_KEY` — free tier at [aistudio.google.com](https://aistudio.google.com/apikey) | `gemini-3.7-flash` |
 | `vertex-ai` | `VERTEX_API_KEY` (express mode), or Application Default Credentials + `GOOGLE_CLOUD_PROJECT` | `gemini-3.7-flash` |
 | `openrouter` | `OPENROUTER_API_KEY` | any OpenRouter model id |
+| `openai-compatible` | none — set `AR_MODEL_BASE_URL` | any model your server lists |
 
 ```
 AR_MODEL_PROVIDER=gemini-api
@@ -247,6 +248,11 @@ GEMINI_API_KEY=<your key>
 AR_MODEL=gemini-3.7-flash
 AR_MAX_COST_USD=20
 ```
+
+Any OpenAI-compatible server works through the last row — a local vLLM or Ollama, or one on another
+machine. Point `AR_MODEL_BASE_URL` at its `/v1` endpoint and set `AR_MODEL` to the name it serves.
+Inference you host costs nothing per token, so it is recorded as zero spend rather than charged at
+the list price of a hosted model; explicit rate overrides still win if you want to price it.
 
 Values already in the real environment always win over the file, so the same code runs unchanged in
 the cloud, where configuration arrives as service environment variables. `.env` is untracked and
@@ -327,7 +333,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 102 tests
+npm test        # 110 tests
 npm run typecheck
 ```
 

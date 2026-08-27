@@ -94,9 +94,35 @@ test("AR_MODEL selects the model on whichever provider is configured", () => {
   // A user who sets AR_MODEL and points the runtime at OpenRouter must get the
   // model they named, not a silent fallback to the built-in default.
   const worker = readFileSync(join(process.cwd(), "src", "worker", "genkit-worker.ts"), "utf8");
-  const openRouterBranch = worker.slice(worker.indexOf('if (provider === "openrouter")'),
+  const openRouterBranch = worker.slice(worker.indexOf('if (provider === "openrouter"'),
     worker.indexOf('if (provider === "vertex-ai"'));
   assert.match(openRouterBranch, /process\.env\.AR_MODEL/);
   const googleBranch = worker.slice(worker.indexOf('const requested = request.model'));
   assert.match(googleBranch, /process\.env\.AR_MODEL/);
+});
+
+test("a self-hosted model is not charged the list price of a hosted one", () => {
+  // An unknown model falls back to $3/$20 per million. Applied to a model served
+  // from the operator's own hardware, that invents spend and eventually trips a
+  // ceiling nothing was spending against.
+  assert.equal(estimateCostUsd("deepseek-v4-flash-0731", 24_000_000, 700_000, 0, true), 0);
+  assert.ok(estimateCostUsd("deepseek-v4-flash-0731", 24_000_000, 700_000, 0, false) > 80);
+  // A known hosted model keeps its real rate even when the flag is set, and an
+  // explicit override still wins, so self-hosting can be priced deliberately.
+  process.env.AR_INPUT_USD_PER_MILLION = "0.5";
+  try {
+    assert.equal(estimateCostUsd("whatever", 1_000_000, 0, 0, true), 0.5);
+  } finally { delete process.env.AR_INPUT_USD_PER_MILLION; }
+});
+
+test("an OpenAI-compatible base URL can point at a local model server", () => {
+  const worker = readFileSync(join(process.cwd(), "src", "worker", "genkit-worker.ts"), "utf8");
+  const branch = worker.slice(worker.indexOf('if (provider === "openrouter"'), worker.indexOf('const requested ='));
+  // The URL was hardcoded, so a served model speaking the same protocol on the
+  // operator's own network could not be reached at all.
+  assert.match(branch, /AR_MODEL_BASE_URL/);
+  assert.match(branch, /baseURL,/);
+  // A self-hosted endpoint usually has no auth; OpenRouter always needs a key.
+  assert.match(branch, /not-required/);
+  assert.match(branch, /OpenRouter credential missing/);
 });

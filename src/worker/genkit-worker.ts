@@ -216,8 +216,14 @@ const STANDARD_TOKEN_RATES: Record<string, { input: number; output: number }> = 
 };
 
 /** Conservative list-price estimate used by the campaign's active cost stop. */
-export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number, searchQueries = 0): number {
-  const listed = STANDARD_TOKEN_RATES[model] ?? { input: 3, output: 20 };
+export function estimateCostUsd(model: string, inputTokens: number, outputTokens: number,
+  searchQueries = 0, selfHosted = false): number {
+  // A model served from the operator's own hardware costs nothing per token, so
+  // charging it the list price of an unknown hosted model would invent spend and
+  // eventually trip a ceiling that nothing was actually spending against.
+  // Explicit rate overrides still win, for anyone who wants to price their own
+  // electricity.
+  const listed = STANDARD_TOKEN_RATES[model] ?? (selfHosted ? { input: 0, output: 0 } : { input: 3, output: 20 });
   const inputRate = Number(process.env.AR_INPUT_USD_PER_MILLION ?? listed.input);
   const outputRate = Number(process.env.AR_OUTPUT_USD_PER_MILLION ?? listed.output);
   const searchRate = Number(process.env.AR_SEARCH_USD_PER_QUERY ?? 0.014);
@@ -461,8 +467,16 @@ export async function fetchPublicText(input: string): Promise<string> {
 
 function providerFor(request: WorkerRequest) {
   const provider = (process.env.AR_MODEL_PROVIDER ?? "openrouter").toLowerCase();
-  if (provider === "openrouter") {
-    const apiKey = resolveOpenRouterApiKey();
+  if (provider === "openrouter" || provider === "openai-compatible") {
+    // Any OpenAI-compatible endpoint: OpenRouter, a local vLLM, Ollama, or a
+    // model server on another machine. The base URL was hardcoded, so a served
+    // model that speaks the same protocol could not be used at all — including
+    // one running on the operator's own hardware, where inference is free.
+    const baseURL = process.env.AR_MODEL_BASE_URL?.trim() || "https://openrouter.ai/api/v1";
+    const local = !/openrouter\.ai/i.test(baseURL);
+    // A self-hosted endpoint usually has no auth. OpenRouter always needs a key,
+    // so the credential is only required when talking to it.
+    const apiKey = resolveOpenRouterApiKey() ?? (local ? "not-required" : null);
     if (!apiKey) {
       throw new Error("OpenRouter credential missing: set OPENROUTER_API_KEY or sign in to OpenRouter with Pi");
     }
@@ -473,7 +487,7 @@ function providerFor(request: WorkerRequest) {
     const plugin = openAICompatible({
       name: "openrouter",
       apiKey,
-      baseURL: "https://openrouter.ai/api/v1",
+      baseURL,
       // This is deliberately not a research deadline. The progress watchdog
       // reviews quiet work; the transport ceiling only guards an orphaned TCP
       // request and is longer than any normal campaign operation.
@@ -484,7 +498,7 @@ function providerFor(request: WorkerRequest) {
     return {
       ai: genkit({ plugins: [plugin] }),
       model: compatOaiModelRef({ name: modelName, namespace: "openrouter" }),
-      provider: "openrouter", modelName, apiKey,
+      provider: local ? "openai-compatible" : "openrouter", modelName, apiKey,
     };
   }
   // A daemon is started without an explicit --model, so the deployment picks
@@ -922,7 +936,8 @@ export class GenkitWorker implements AgentWorker {
       usage.modelRequests = billed.requests;
     }
     const localSearches = trace.filter((step) => step.kind === "tool_call" && step.toolName === "web_search").length;
-    usage.costUsd = estimateCostUsd(modelName, usage.inputTokens, usage.outputTokens, localSearches);
+    usage.costUsd = estimateCostUsd(modelName, usage.inputTokens, usage.outputTokens, localSearches,
+      provider === "openai-compatible");
 
     const result: WorkerResult = {
       ok: !failure,
