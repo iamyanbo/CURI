@@ -26,6 +26,12 @@ export function runtimeDoctor(config: RuntimeConfig, env = process.env): DoctorC
       detail: source === "environment" ? "configured in environment"
         : source === "pi-fallback" ? "available through read-only Pi auth fallback"
           : "set OPENROUTER_API_KEY or sign in to OpenRouter with Pi" });
+  } else if (config.modelProvider === "openai-compatible") {
+    const baseUrl = env.AR_MODEL_BASE_URL?.trim();
+    checks.push({ name: "OpenAI-compatible model endpoint", ok: Boolean(baseUrl),
+      detail: baseUrl ?? "set AR_MODEL_BASE_URL to the server's /v1 endpoint" });
+    checks.push({ name: "Served model name", ok: Boolean(env.AR_MODEL?.trim()),
+      detail: env.AR_MODEL?.trim() || "set AR_MODEL to the name returned by the server" });
   } else if (config.modelProvider === "gemini-api") {
     checks.push({ name: "Gemini API key", ok: Boolean(geminiApiKey(env)),
       detail: geminiApiKey(env) ? "configured" : "set GEMINI_API_KEY (or GOOGLE_API_KEY)" });

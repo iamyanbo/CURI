@@ -17,6 +17,8 @@
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { localOnly } from "../config/env-file.js";
+
 import { statePath } from "./paths.js";
 
 import { buildPublishedRecord } from "./publish.js";
@@ -30,6 +32,12 @@ const MAX_CONSECUTIVE_FAILURES = 5;
 /** The project the record is published to, or null when publishing is not configured. */
 export function mirrorProjectId(env: NodeJS.ProcessEnv = process.env): string | null {
   if ((env.AR_MIRROR_SYNC ?? "").trim().toLowerCase() === "off") return null;
+  // Publishing the record to Firestore is the one part of a normal run that
+  // leaves the machine on its own schedule, so a local-only deployment has to
+  // switch it off here rather than relying on the project id being unset: the
+  // id is also read from GOOGLE_CLOUD_PROJECT / GCLOUD_PROJECT, which other
+  // Google tooling sets for unrelated reasons.
+  if (localOnly(env)) return null;
   const project = env.AR_PUBLISH_PROJECT?.trim() || env.GOOGLE_CLOUD_PROJECT?.trim()
     || env.GCLOUD_PROJECT?.trim();
   return project || null;

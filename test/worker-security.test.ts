@@ -49,8 +49,15 @@ test("fetch policy blocks local, metadata and private literal addresses", async 
 
 test("Gemini usage is charged into the campaign budget", () => {
   assert.equal(estimateCostUsd("gemini-3.5-flash", 1_000_000, 1_000_000), 10.5);
-  assert.equal(estimateCostUsd("gemini-3.5-flash", 0, 0, 2), 0.028);
+  assert.equal(estimateCostUsd("gemini-3.5-flash", 0, 0, 2), 0);
   assert.ok(estimateCostUsd("unknown-model", 1_000, 1_000) > 0);
+});
+
+test("a metered search proxy can still be priced explicitly", () => {
+  process.env.AR_SEARCH_USD_PER_QUERY = "0.014";
+  try {
+    assert.equal(estimateCostUsd("deepseek-v4-flash-0731", 0, 0, 2, true), 0.028);
+  } finally { delete process.env.AR_SEARCH_USD_PER_QUERY; }
 });
 
 test("Ox Alpha preview usage is observed without inventing a token charge", () => {
@@ -125,4 +132,11 @@ test("an OpenAI-compatible base URL can point at a local model server", () => {
   // A self-hosted endpoint usually has no auth; OpenRouter always needs a key.
   assert.match(branch, /not-required/);
   assert.match(branch, /OpenRouter credential missing/);
+});
+
+test("generic web search is model-provider independent", () => {
+  const worker = readFileSync(join(process.cwd(), "src", "worker", "genkit-worker.ts"), "utf8");
+  assert.match(worker, /searchPublicWeb\(query, maxResults\)/);
+  assert.doesNotMatch(worker, /openRouterSearch|openrouter:web_search/);
+  assert.doesNotMatch(worker, /localOnly\(\) \? null/);
 });

@@ -42,7 +42,7 @@ function usage(): void {
     "",
     "  cli.ts doctor                                       check this machine",
     "",
-    "  profiles: [--profile local|cloud] [--model-provider openrouter|gemini-api|vertex-ai]",
+    "  profiles: [--profile local|cloud] [--model-provider openrouter|openai-compatible|gemini-api|vertex-ai]",
   ].join("\n"));
 }
 

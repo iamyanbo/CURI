@@ -273,6 +273,11 @@ machine. Point `AR_MODEL_BASE_URL` at its `/v1` endpoint and set `AR_MODEL` to t
 Inference you host costs nothing per token, so it is recorded as zero spend rather than charged at
 the list price of a hosted model; explicit rate overrides still win if you want to price it.
 
+For the dedicated PC + DGX Spark configuration, including the no-cloud boundary,
+provider-independent web search, `ABLATE=1`, and the Windows launcher, see
+[`docs/local-deepseek-spark.md`](docs/local-deepseek-spark.md). That configuration lives on the
+`local-deepseek-spark` branch so the original hackathon submission remains unchanged.
+
 Values already in the real environment always win over the file, so the same code runs unchanged in
 the cloud, where configuration arrives as service environment variables. `.env` is untracked and
 must stay that way.

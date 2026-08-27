@@ -1,5 +1,5 @@
 export type RuntimeProfile = "local" | "cloud";
-export type ModelProvider = "openrouter" | "gemini-api" | "vertex-ai";
+export type ModelProvider = "openrouter" | "openai-compatible" | "gemini-api" | "vertex-ai";
 export type ComputeBackend = "local" | "cloud-run";
 export type StateBackend = "sqlite" | "firestore";
 
@@ -30,7 +30,7 @@ export function runtimeConfig(argv = process.argv.slice(2), env = process.env): 
     ? { modelProvider: "vertex-ai" as const, compute: "cloud-run" as const, store: "firestore" as const }
     : { modelProvider: "openrouter" as const, compute: "local" as const, store: "sqlite" as const };
   const modelProvider = choice(valueOf(argv, "model-provider") ?? env.AR_MODEL_PROVIDER,
-    ["openrouter", "gemini-api", "vertex-ai"] as const, defaults.modelProvider, "model-provider");
+    ["openrouter", "openai-compatible", "gemini-api", "vertex-ai"] as const, defaults.modelProvider, "model-provider");
   const compute = choice(valueOf(argv, "compute") ?? env.AR_COMPUTE,
     ["local", "cloud-run"] as const, defaults.compute, "compute");
   const store = choice(valueOf(argv, "store") ?? env.AR_STORE,

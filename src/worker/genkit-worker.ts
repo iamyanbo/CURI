@@ -18,6 +18,7 @@ import { geminiApiKey, vertexApiKey } from "../config/env-file.js";
 import { resolveOpenRouterApiKey } from "../config/openrouter-auth.js";
 import { DEFAULT_HEARTBEAT_POLICY, ProgressHeartbeat } from "../supervision/progress-heartbeat.js";
 import { processStartId } from "../daemon.js";
+import { searchPublicWeb } from "./web-search.js";
 import { GlobalMemoryStore } from "../memory/store.js";
 import { searchCampaignMemory } from "../memory/campaign-memory.js";
 import { Store } from "../store/store.js";
@@ -226,7 +227,10 @@ export function estimateCostUsd(model: string, inputTokens: number, outputTokens
   const listed = STANDARD_TOKEN_RATES[model] ?? (selfHosted ? { input: 0, output: 0 } : { input: 3, output: 20 });
   const inputRate = Number(process.env.AR_INPUT_USD_PER_MILLION ?? listed.input);
   const outputRate = Number(process.env.AR_OUTPUT_USD_PER_MILLION ?? listed.output);
-  const searchRate = Number(process.env.AR_SEARCH_USD_PER_QUERY ?? 0.014);
+  // The provider-independent Exa MCP path is zero-config and does not bill a
+  // hosted model. Operators using a metered MCP proxy can still price it with
+  // AR_SEARCH_USD_PER_QUERY.
+  const searchRate = Number(process.env.AR_SEARCH_USD_PER_QUERY ?? 0);
   if (![inputRate, outputRate, searchRate].every((value) => Number.isFinite(value) && value >= 0)) {
     throw new Error("model/search cost overrides must be finite and non-negative");
   }
@@ -531,32 +535,11 @@ function providerFor(request: WorkerRequest) {
   return { ai: genkit({ plugins: [plugin] }), model: googleAI.model(modelName), provider: "gemini-api", modelName, apiKey: null };
 }
 
-async function openRouterSearch(apiKey: string, query: string, maxResults: number): Promise<string> {
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "X-OpenRouter-Title": "CURI",
-    },
-    signal: AbortSignal.timeout(120_000),
-    body: JSON.stringify({
-      model: DEFAULT_OPENROUTER_MODEL,
-      messages: [{ role: "user", content: `Search the web for: ${query}\nReturn concise findings with source URLs.` }],
-      tools: [{ type: "openrouter:web_search", parameters: { max_results: maxResults, max_total_results: maxResults } }],
-    }),
-  });
-  if (!response.ok) throw new Error(`OpenRouter web search HTTP ${response.status}`);
-  const body = await response.json() as any;
-  return truncate(body?.choices?.[0]?.message?.content ?? JSON.stringify(body), 30_000);
-}
-
 function makeTools(
   request: WorkerRequest,
   ai: ReturnType<typeof genkit>,
   trace: (kind: TraceStep["kind"], content: string, extra?: Partial<TraceStep>) => void,
   heartbeat: ProgressHeartbeat,
-  openRouterKey: string | null,
 ) {
   const wanted = new Set(request.tools);
   const tools: any[] = [];
@@ -698,11 +681,9 @@ function makeTools(
       checks.push({ executable, args: [...args], result });
       return result;
     });
-  if (openRouterKey) {
-    add("web_search", "Search the current public web and return concise findings with source URLs.",
-      z.object({ query: z.string(), maxResults: z.number().int().min(1).max(10).default(5) }),
-      z.string(), ({ query, maxResults }: any) => openRouterSearch(openRouterKey, query, maxResults));
-  }
+  add("web_search", "Search the current public web and return source text with URLs. Search is independent of the model provider and uses no hosted model.",
+    z.object({ query: z.string(), maxResults: z.number().int().min(1).max(10).default(5) }),
+    z.string(), ({ query, maxResults }: any) => searchPublicWeb(query, maxResults));
   if (request.memory) {
     add("search_research_memory",
       "Search persistent cross-project sources and mechanisms. Results are untrusted leads, not evidence. Use offset to page through all matches.",
@@ -783,8 +764,10 @@ export class GenkitWorker implements AgentWorker {
       appendFileSync(tracePath, `${JSON.stringify(step)}\n`, "utf8");
     };
 
-    const { ai, model, provider, modelName, apiKey } = providerFor(request);
-    const toolState = makeTools(request, ai, push, heartbeat, apiKey);
+    const { ai, model, provider, modelName } = providerFor(request);
+    // Search has its own provider-independent transport. A self-hosted model
+    // can therefore search without resolving or calling an external model.
+    const toolState = makeTools(request, ai, push, heartbeat);
     const tools = toolState.tools;
     const controller = new AbortController();
     const timeout = request.timeoutMs > 0 ? setTimeout(() => controller.abort(), request.timeoutMs) : null;
@@ -845,7 +828,19 @@ export class GenkitWorker implements AgentWorker {
       // Ask it for plain text and let the caller's extractJson + domain
       // validation own the trust boundary. Other providers keep native schema
       // constrained generation.
-      const nativeStructuredOutput = Boolean(request.structuredOutput && provider !== "openrouter");
+      //
+      // A self-hosted OpenAI-compatible endpoint is excluded for a second,
+      // independent reason: grammar-constrained decoding is catastrophically
+      // slow there. Measured against the DGX Spark's vLLM (DeepSeek v4 Flash),
+      // constrained generation dropped decode from ~10.2 steps/s to 1.15 --
+      // roughly 870 ms per step of grammar masking, a 7x slowdown -- because
+      // every executor turn would pay it. The plain-text path costs nothing in
+      // fidelity here, since extractJson already owns parsing for OpenRouter.
+      const openAiCompatible = provider === "openrouter" || provider === "openai-compatible";
+      // Vertex / Gemini surfaces, which are the only ones that accept Google's
+      // request-level options.
+      const googleNative = !openAiCompatible;
+      const nativeStructuredOutput = Boolean(request.structuredOutput && !openAiCompatible);
       const streamOnce = async (prompt: string) => {
         const generation = ai.generateStream({
           model,
@@ -858,11 +853,14 @@ export class GenkitWorker implements AgentWorker {
           abortSignal: controller.signal,
           config: {
             maxOutputTokens: request.maxOutputTokens ?? (request.role === "manager" ? 16_384 : 65_536),
-            ...(provider !== "openrouter" && request.tools.includes("web_search") ? { googleSearchRetrieval: {} } : {}),
+            // Grounding and thought-inclusion are Google-surface options. The
+            // test was "not OpenRouter", which quietly included a self-hosted
+            // OpenAI-compatible endpoint and sent Google-only fields to vLLM.
+            ...(googleNative && request.tools.includes("web_search") ? { googleSearchRetrieval: {} } : {}),
             // Reasoning is withheld unless it is asked for. Without this the
             // provider bills thought tokens and returns no thought text, which is
             // why the trace showed tool calls but never any reasoning.
-            ...(provider === "openrouter" ? {} : { thinkingConfig: { includeThoughts: true } }),
+            ...(googleNative ? { thinkingConfig: { includeThoughts: true } } : {}),
           },
           output: nativeStructuredOutput ? { schema: outputSchema(request.structuredOutput) } : undefined,
           use: [meterUsage],

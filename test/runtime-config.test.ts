@@ -20,4 +20,13 @@ describe("runtime profiles", () => {
     assert.equal(hybrid.store, "sqlite");
     assert.equal(hybrid.compute, "cloud-run");
   });
+
+  it("accepts a self-hosted OpenAI-compatible model as its own provider", () => {
+    const local = runtimeConfig([], {
+      AR_MODEL_PROVIDER: "openai-compatible",
+    } as NodeJS.ProcessEnv);
+    assert.equal(local.modelProvider, "openai-compatible");
+    assert.equal(local.compute, "local");
+    assert.equal(local.store, "sqlite");
+  });
 });
