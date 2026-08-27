@@ -261,7 +261,15 @@ export function buildResearchDashboardState(projectRoot: string, requestedDirect
 }
 
 export async function serveResearchDashboard(input: { projectRoot: string; directionId?: string; port: number }): Promise<void> {
-  const html = readFileSync(join(HERE, "dashboard.html"), "utf8");
+  const pagePath = join(HERE, "dashboard.html");
+  // Read per request rather than once at startup. The page was held in memory
+  // for the life of the process, so every change to the dashboard needed the
+  // daemon restarted before anyone could see it — and a restart of a long-lived
+  // process is exactly the kind of step that gets forgotten. The file is small
+  // and the reader is local.
+  const page = () => readFileSync(pagePath, "utf8");
+  // Fail at startup rather than on the first request if it is missing.
+  page();
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
     if (request.method === "GET" && url.pathname === "/api/state") {
@@ -349,7 +357,7 @@ export async function serveResearchDashboard(input: { projectRoot: string; direc
     // schema is untouched so the loop can return without a migration.
     if (request.method === "GET" && url.pathname === "/") {
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-      response.end(html); return;
+      response.end(page()); return;
     }
     json(response, 404, { error: "not found" });
   });
