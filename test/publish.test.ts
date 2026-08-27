@@ -189,3 +189,22 @@ test("a published run carries its trace but not the machine", () => {
     assert.equal((timingOnly.runs[0] as Record<string, any>).segments.length, 1);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a provider failure is redacted before it can block publishing", () => {
+  // A stack trace from the local machine landed in runs[].failure unredacted.
+  // The boundary check refused the whole record — correctly — and kept refusing
+  // it, so the mirror silently stopped updating for hours.
+  const { root, store } = fixture();
+  try {
+    const taskId = store.delegateTask({ directionId: "direction", mode: "exploration", markdown: "# Study" });
+    const runId = store.beginRun({ directionId: "direction", taskId, role: "executor", inputMarkdown: "brief" });
+    store.finishRun({ runId, state: "failed", outputMarkdown: "",
+      failure: `PROVIDER_ERROR: at (C:${BS}Users${BS}yanbo${BS}proj${BS}node_modules${BS}x.ts:3)` });
+    const record = buildPublishedRecord(store, "direction", root);
+    const run = record.runs.find((item) => (item as Record<string, unknown>).run_id === runId) as Record<string, any>;
+    assert.match(run.failure, /<workspace>/);
+    assert.doesNotMatch(run.failure, /yanbo/);
+    // The classification survives redaction: it is what makes the record useful.
+    assert.match(run.failure, /PROVIDER_ERROR/);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});

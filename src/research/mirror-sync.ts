@@ -94,6 +94,14 @@ export async function syncMirrorOnce(input: {
  * that stops the timer and publishes one last time, so the record the mirror
  * serves after a run ends is the state the run actually ended in.
  */
+/** The direction's latest event sequence, or the current watermark on failure. */
+function latestEventSeq0(projectRoot: string, directionId: string): number {
+  try {
+    const store = ResearchStore.open(statePath(projectRoot, "research.sqlite"));
+    try { return latestEventSeq(store, directionId); } finally { store.close(); }
+  } catch { return -1; }
+}
+
 export function startMirrorSync(input: {
   projectRoot: string; directionId: string; databaseId?: string;
 }): () => Promise<void> {
@@ -117,8 +125,12 @@ export function startMirrorSync(input: {
     running = true;
     try {
       const advanced = await syncMirrorOnce({ ...input, since, projectId, log });
-      failures = advanced > since ? 0 : failures;
-      since = advanced;
+      // A sync that reports failure returns the watermark unchanged. Counting
+      // only thrown errors meant a permanently failing publish — a redaction gap
+      // rather than a network blip — retried every two minutes forever without
+      // ever reaching the give-up threshold.
+      if (advanced > since) { failures = 0; since = advanced; }
+      else if (latestEventSeq0(input.projectRoot, input.directionId) > since) failures += 1;
     } catch (error) {
       // Publishing is optional telemetry. Whatever it does, it must not be able
       // to end a research run — a missing credential once killed a supervisor

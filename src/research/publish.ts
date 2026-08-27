@@ -118,7 +118,12 @@ export function buildPublishedRecord(store: ResearchStore, directionId: string,
         .map(({ kind, label, startMs, endMs, isError }) => ({ kind, label, startMs, endMs, isError }));
       return {
         run_id: item.run_id, task_id: item.task_id, role: item.role, state: item.state,
-        failure: item.failure, model: item.model, provider: item.provider,
+        // A provider failure carries a stack trace from this machine, so it is
+        // redacted like any other text. Publishing it raw blocked every sync:
+        // the boundary check refused the whole record, correctly, and kept
+        // refusing it because nothing upstream ever fixed the field.
+        failure: item.failure === null || item.failure === undefined ? null : redact(String(item.failure)),
+        model: item.model, provider: item.provider,
         input_tokens: item.input_tokens, output_tokens: item.output_tokens, cost_usd: item.cost_usd,
         started_at: item.started_at, completed_at: item.completed_at,
         trace_steps: published.length,
