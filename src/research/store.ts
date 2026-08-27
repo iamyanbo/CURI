@@ -309,7 +309,25 @@ export class ResearchStore {
     this.appendEvent(row.direction_id, null, `source.${state}`, "watcher", markdown);
   }
 
-  createComponent(directionId: string, markdown: string): string {
+  createComponent(directionId: string, markdown: string): string | null {
+    // A thread that already exists does not need opening again. Without this a
+    // near-copy of an existing component could be created every turn, and since
+    // component.created counts as progress it would keep the loop awake while
+    // adding nothing to the map. The threshold is high: only a near-duplicate is
+    // refused, because opening a genuinely new thread is exactly what this
+    // action is for.
+    const existing = this.db.prepare("SELECT title, description_md FROM components WHERE direction_id=?")
+      .all(directionId) as Array<{ title: string; description_md: string }>;
+    // Too little text to judge: a two-word description matches every other
+    // two-word description, which would refuse the second component a direction
+    // ever opens.
+    const wordCount = (markdown.match(/[a-z][a-z0-9-]{3,}/gi) ?? []).length;
+    if (wordCount >= 12) {
+      for (const item of existing) {
+        if (briefSimilarity(markdown, `${item.title}
+${item.description_md ?? ""}`) >= 0.75) return null;
+      }
+    }
     const id = researchId("COMP");
     const now = researchNow();
     this.db.prepare(

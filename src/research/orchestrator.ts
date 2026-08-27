@@ -187,7 +187,12 @@ export function applyOrchestratorActions(store: ResearchStore, directionId: stri
   for (const action of actions) {
     const markdown = action.markdown || "(No additional Markdown supplied.)";
     if (action.name === "create_component") {
-      store.createComponent(directionId, markdown);
+      if (!store.createComponent(directionId, markdown)) {
+        store.saveNote(directionId, runId, "runtime",
+          "Component not created: an existing thread already covers this. Open a component for a question the"
+          + " current threads do not hold, or record what you have learned against the one that does.\n\n"
+          + compact(markdown, 600));
+      }
       continue;
     }
     if (action.name === "relate_components") {

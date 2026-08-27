@@ -489,3 +489,22 @@ test("restating an unchanged relationship records nothing", () => {
     assert.equal(events(), after + 1);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a near-duplicate component is refused, a genuinely new thread is not", () => {
+  const root = mkdtempSync(join(tmpdir(), "lean-research-comp-"));
+  const store = ResearchStore.open(join(root, "research.sqlite"));
+  try {
+    store.createDirection({ id: "direction", title: "D", briefMarkdown: "b",
+      constraintsMarkdown: "", domainPath: root });
+    assert.ok(store.createComponent("direction",
+      "# Search Intensity and Selection Bias\n\nHow the size of the strategy search space inflates in-sample performance and creates backtest overfitting."));
+    // The same thread, reworded, adds nothing to the map and would otherwise
+    // count as progress and keep the loop awake.
+    assert.equal(store.createComponent("direction",
+      "# Search Intensity and Selection Bias\n\nHow the size of a strategy search space inflates in-sample performance and produces backtest overfitting."), null);
+    // A different question opens a real thread.
+    assert.ok(store.createComponent("direction",
+      "# Cost Assumptions and Turnover\n\nWhether apparent survivors are illusions of underestimated transaction friction at realistic rebalancing frequency."));
+    assert.equal((store.db.prepare("SELECT COUNT(*) n FROM components").get() as { n: number }).n, 2);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
