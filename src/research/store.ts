@@ -138,6 +138,12 @@ export class ResearchStore {
     const db = new Database(path);
     db.pragma("foreign_keys = ON");
     db.pragma("journal_mode = WAL");
+    // Directions run as independent supervisor processes against this one file,
+    // so a write can find the database locked by a sibling. WAL keeps readers
+    // clear of writers, but two writers still serialise, and without a busy
+    // timeout the loser gets an immediate SQLITE_BUSY that surfaces as a failed
+    // research turn rather than as the momentary contention it actually is.
+    db.pragma("busy_timeout = 15000");
     const exists = db.prepare(
       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_schema_meta'",
     ).get();

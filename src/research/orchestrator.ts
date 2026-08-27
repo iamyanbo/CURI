@@ -318,11 +318,44 @@ function ensureInside(root: string, path: string): string {
   return full;
 }
 
+/**
+ * `git worktree add`, retried while the repository lock is held.
+ *
+ * Every direction carves its task worktrees out of the same project repository,
+ * so two supervisors running different directions can reach this at the same
+ * moment. Git takes an exclusive lock for the operation and does not wait for
+ * it: the loser exits immediately with "File exists" on an index or worktree
+ * lock. That surfaced as a blocked task and a spent executor attempt, when the
+ * correct response is simply to wait out an operation that takes milliseconds.
+ *
+ * Only lock contention is retried. Any other failure (a bad revision, no disk)
+ * is returned to the caller on the first attempt, since retrying cannot help.
+ */
+function addWorktreeContended(projectRoot: string, workspace: string): void {
+  const deadline = Date.now() + 30_000;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      git(["worktree", "add", "-q", "--detach", workspace, "HEAD"], projectRoot);
+      return;
+    } catch (error) {
+      const text = String((error as { stderr?: string })?.stderr ?? error);
+      const contended = /lock|File exists|already locked|being created/i.test(text);
+      if (!contended || Date.now() >= deadline) throw error;
+      // Bounded exponential backoff with a jitter term, so two supervisors that
+      // collide do not then retry in lockstep forever. Atomics.wait rather than
+      // a spin: this helper is synchronous, and a busy loop would burn a core
+      // for the whole backoff instead of parking the thread.
+      const backoff = Math.min(250 * 2 ** (attempt - 1), 2_000) + Math.floor(Math.random() * 100);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, backoff);
+    }
+  }
+}
+
 function createTaskWorkspace(projectRoot: string, taskId: string): string {
   const root = statePath(projectRoot, "worktrees");
   mkdirSync(root, { recursive: true });
   const workspace = join(root, taskId.replace(/[^a-z0-9_-]/gi, "_"));
-  git(["worktree", "add", "-q", "--detach", workspace, "HEAD"], projectRoot);
+  addWorktreeContended(projectRoot, workspace);
   const patch = execFileSync("git", ["diff", "--binary", "HEAD"], {
     cwd: projectRoot, encoding: "utf8", maxBuffer: 128 * 1024 * 1024, windowsHide: true,
   });
