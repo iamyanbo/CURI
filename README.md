@@ -28,9 +28,9 @@ activity would not produce more understanding. The point is not to make an agent
 It is to test whether an autonomous process can produce research that another person can inspect,
 question and build on.
 
-In an unattended run on a consumer GPU, the prototype produced four findings across four research
-threads, including one that **refuted its own hypothesis** and one that recorded a **wall-clock
-slowdown** as a real result. The rest of this document describes the runtime and the constraints
+In unattended runs on a consumer GPU and a DGX Spark, the prototype produced **21 recorded
+outcomes** across two domains — including one that **refuted its own hypothesis**, one that recorded
+a **wall-clock slowdown** as a real result, and one outright **refutation**. The rest of this document describes the runtime and the constraints
 that make those findings possible.
 
 **Live mirror:** https://research-mirror-qdqttyl3jq-uc.a.run.app
@@ -509,7 +509,7 @@ reached and the fact that the record preserves what the experiments cost:
   a healthy acceptance rate — and it survived into the record instead of being discarded as a
   failed run.
 
-The contribution this repository claims is the **research process**, not the four findings: a
+The contribution this repository claims is the **research process**, not the findings: a
 delegation gate that refuses untethered and near-duplicate briefs, syntheses that accumulate and
 can be superseded rather than overwritten, per-call cost accounting, and an agent that is allowed
 to stop when it has nothing worth asking. Whether this process can produce a finding that is *not*

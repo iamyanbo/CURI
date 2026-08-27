@@ -159,8 +159,8 @@ undercount was **20× on input and 90× on output**, for two compounding reasons
 the entire conversation on every turn, and reasoning tokens arrive in a separate field that a naive
 sum ignores. The fix was a Genkit model middleware that meters *every* model call and counts
 thought tokens as output. If you are building agents with a spend ceiling, measure at the
-middleware, not at the call site — otherwise your ceiling is fiction. Current true totals: 15.9M
-input, 424k output, $13.44.
+middleware, not at the call site — otherwise your ceiling is fiction. True totals across both
+directions: 71.3M input, 1.78M output, $60.13.
 
 **An error that says nothing is worse than a crash.** For a while every provider failure was
 recorded as "Provider returned error". The cause was one line: `JSON.stringify(error.cause)` returns

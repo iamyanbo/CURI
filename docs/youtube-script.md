@@ -109,8 +109,9 @@ Then the stack, briefly:
 > Firestore for the published record and Cloud Run for the public mirror. Each experiment runs in
 > its own git worktree, so an attempt can be resumed rather than restarted.
 
-> The run I am showing has four research threads and six recorded outcomes. The four headline
-> findings are a compact summary of those outcomes, not six claims of new scientific discovery.
+> The run I am showing has four research threads and seventeen recorded outcomes, and there is a
+> second direction on other hardware with five more threads. The headline findings are a compact
+> summary of those outcomes, not twenty-one claims of new scientific discovery.
 
 ---
 
