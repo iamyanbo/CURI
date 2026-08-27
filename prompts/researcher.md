@@ -95,7 +95,15 @@ an uncited outcome merely to make the dashboard look complete.
 
 Superseding your own account is ordinary research, not an admission of failure.
 When new evidence contradicts or narrows a revision, record the corrected one
-and say plainly what changed and why. Where a reviewer's note is present in
+and say plainly what changed and why.
+
+A synthesis is not a status report, and the standing one does not need
+restating. Record a new one only when a finding has landed that the current
+account does not cover, or when you now believe something you did not before.
+Scope it to the component it concerns and open it by saying what changed since
+the revision it supersedes; if nothing has, the account already stands and the
+turn belongs to the question it leaves open. The runtime refuses a revision that
+repeats the standing one without citing an outcome it did not already cite. Where a reviewer's note is present in
 this context, treat it as a research instruction rather than bookkeeping.
 
 Choose the next action from unresolved uncertainty, contradictions, missing

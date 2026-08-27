@@ -8,7 +8,7 @@ import { diffAgainstHead, git, sha256File } from "../core/workspace.js";
 import { runProcess, runWorker } from "../worker/genkit-worker.js";
 import type { MarkdownAction, WorkerResult } from "../worker/types.js";
 import { immediateStopFile } from "./control.js";
-import { checkDelegation } from "./delegation.js";
+import { checkDelegation, checkSynthesis } from "./delegation.js";
 import { preflightFacts, renderPreflightMarkdown } from "./preflight.js";
 import { ResearchStore, researchHash, researchId, researchNow } from "./store.js";
 import type { LeanTask, OutcomeVerdict } from "./types.js";
@@ -58,7 +58,16 @@ function orchestratorContext(store: ResearchStore, directionId: string, projectR
       Record<string, unknown> | undefined;
     return String(review?.verdict ?? "tentative");
   };
-  const syntheses = context.syntheses.slice(0, 20).map((synthesis) => {
+  // Only understanding that still stands. A synthesis another one supersedes is
+  // history: keeping it here meant three quarters of the context was the
+  // orchestrator's own back-catalogue, including drafts it had already
+  // replaced, while the research question it is meant to pursue was one percent
+  // of it. Re-reading that much of its own prose is what produced successive
+  // syntheses with half their words in common.
+  const superseded = new Set(context.syntheses
+    .map((item) => item.supersedes_synthesis_id).filter(Boolean).map(String));
+  const live = context.syntheses.filter((item) => !superseded.has(String(item.synthesis_id)));
+  const syntheses = live.slice(0, 8).map((synthesis) => {
     const outcomeIds = context.synthesisOutcomes.filter((item) => item.synthesis_id === synthesis.synthesis_id)
       .map((item) => item.outcome_id).join(", ");
     const sourceIds = context.synthesisSources.filter((item) => item.synthesis_id === synthesis.synthesis_id)
@@ -71,7 +80,7 @@ function orchestratorContext(store: ResearchStore, directionId: string, projectR
       ? `\nHuman review (${String(review.verdict)}): ${compact(String(review.note_md), 1_500)}`
       : "";
     return `### ${synthesis.synthesis_id} [${synthesisStatus(synthesis.synthesis_id)}] scope=${synthesis.component_id ?? "direction"}\n`
-      + `${compact(String(synthesis.body_md), 3_000)}\nProvenance: ${outcomeIds || "no outcomes cited"}; `
+      + `${compact(String(synthesis.body_md), 1_200)}\nProvenance: ${outcomeIds || "no outcomes cited"}; `
       + `${sourceIds || "no sources cited"}${reviewNote}`;
   }).join("\n\n");
   const digested = new Set(context.synthesisOutcomes.map((item) => String(item.outcome_id)));
@@ -106,7 +115,10 @@ function orchestratorContext(store: ResearchStore, directionId: string, projectR
     renderPreflightMarkdown(preflightFacts(projectRoot)),
     `## Runtime feedback on your recent turns\n${feedback || "None. No delegation was refused and no task exhausted its attempts."}`,
     `## Components\n${components || "No components. Components are optional."}`,
-    `## Current understanding revisions\n${syntheses || "No synthesis has been recorded. Findings remain tentative until synthesized and reviewed by the human."}`,
+    `## Current understanding\n${syntheses || "No synthesis has been recorded yet."}`
+      + (superseded.size > 0
+        ? `\n\n${superseded.size} earlier revision(s) have been superseded and are not shown here; they remain in the record.`
+        : ""),
     `## Undigested findings\n${undigested || "No uncited outcomes."}`,
     returned,
     `## Relevant watcher cards\n${sourceCards || "No admitted sources yet. You may request watcher questions or begin clearly labeled exploration."}`,
@@ -192,6 +204,26 @@ ${markdown}`);
       continue;
     }
     if (action.name === "record_synthesis") {
+      // The standing account is what a revision must improve on. Restating it
+      // costs a full turn and leaves the record no better, which is what an
+      // orchestrator does when most of its context is its own prose.
+      const recorded = store.db.prepare(
+        "SELECT synthesis_id, body_md, supersedes_synthesis_id FROM component_syntheses WHERE direction_id=? ORDER BY created_at DESC",
+      ).all(directionId) as Array<{ synthesis_id: string; body_md: string; supersedes_synthesis_id: string | null }>;
+      const superseded = new Set(recorded.map((item) => item.supersedes_synthesis_id).filter(Boolean).map(String));
+      const standing = recorded.find((item) => !superseded.has(String(item.synthesis_id)));
+      const verdict = checkSynthesis({
+        markdown,
+        prior: standing
+          ? { synthesisId: String(standing.synthesis_id), bodyMarkdown: String(standing.body_md) }
+          : null,
+      });
+      if (!verdict.admitted) {
+        store.saveNote(directionId, runId, "runtime", verdict.feedbackMarkdown ?? "Synthesis refused.");
+        store.appendEvent(directionId, null, "synthesis.refused", "system",
+          verdict.feedbackMarkdown ?? "Synthesis refused.");
+        continue;
+      }
       store.recordSynthesis({ directionId, runId, markdown });
       continue;
     }

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { checkSynthesis } from "../src/research/delegation.js";
 
 import Database from "better-sqlite3";
 
@@ -403,4 +404,40 @@ test("a schema migration refuses to run while other daemons are live", () => {
   stale.close();
   assert.throws(() => ResearchStore.open(path), /refusing to migrate the research database/);
   rmSync(root, { recursive: true, force: true });
+});
+
+test("a synthesis that restates the standing account without new evidence is refused", () => {
+  // Two live directions produced successive syntheses sharing 43-59% of their
+  // content words, each superseding the last, at the cost of a full generation
+  // per turn. A revision must add evidence or change the account.
+  const standing = "The eviction policy fails on non-local retrieval because attention mass never marks "
+    + "the isolated fact during prefill. Evidence: OUT-aaaa1111. Costs dominate at longer contexts.";
+  const restated = "The eviction policy fails for non-local retrieval since attention mass does not mark "
+    + "the isolated fact during prefill. Evidence: OUT-aaaa1111. Costs dominate at longer context lengths.";
+  const refused = checkSynthesis({ markdown: restated, prior: { synthesisId: "SYN-1", bodyMarkdown: standing } });
+  assert.equal(refused.admitted, false);
+  assert.match(String(refused.feedbackMarkdown), /cites no outcome that one did not already cite/);
+
+  // The same restatement is admitted once it brings a finding the standing
+  // account does not cover.
+  const withNew = `${restated} A later study, OUT-bbbb2222, narrows this to 4-bit values.`;
+  assert.equal(checkSynthesis({ markdown: withNew, prior: { synthesisId: "SYN-1", bodyMarkdown: standing } }).admitted, true);
+
+  // And a genuinely different account of the same evidence is admitted.
+  const different = "Quantization error in keys disperses attention through the softmax, which is a different "
+    + "mechanism from value error accumulating additively. OUT-aaaa1111 is consistent with both readings.";
+  assert.equal(checkSynthesis({ markdown: different, prior: { synthesisId: "SYN-1", bodyMarkdown: standing } }).admitted, true);
+
+  // The first synthesis in a direction has nothing to repeat.
+  assert.equal(checkSynthesis({ markdown: standing, prior: null }).admitted, true);
+});
+
+test("the orchestrator context shows standing understanding, not superseded drafts", () => {
+  // Prior syntheses were three quarters of the context, including drafts already
+  // replaced, while the direction brief was one percent.
+  const source = readFileSync(join(process.cwd(), "src", "research", "orchestrator.ts"), "utf8");
+  const context = source.slice(source.indexOf("function orchestratorContext"), source.indexOf("const digested"));
+  assert.match(context, /supersedes_synthesis_id/);
+  assert.match(context, /live\.slice\(0, 8\)/);
+  assert.match(context, /body_md\), 1_200\)/);
 });

@@ -105,3 +105,53 @@ export function checkDelegation(input: DelegationCheckInput): DelegationVerdict 
 
   return { admitted: true };
 }
+
+/**
+ * Similarity above which a revision that brings no new evidence is refused.
+ *
+ * Lower than the threshold for task briefs, because the failure looks different:
+ * a repeated study is a near-copy, while a rewritten synthesis keeps the same
+ * argument and re-words it. Two live directions produced successive syntheses
+ * sharing 43-59% of their content words, each superseding the last, at the cost
+ * of a full-length generation every turn.
+ */
+export const SYNTHESIS_REPETITION_THRESHOLD = 0.4;
+
+export interface SynthesisCheckInput {
+  markdown: string;
+  /** The synthesis this one would supersede, if any. */
+  prior: { synthesisId: string; bodyMarkdown: string } | null;
+}
+
+/**
+ * A revision has to earn its place: either it cites evidence the account it
+ * replaces did not, or it says something materially different about the same
+ * evidence. Restating the standing account in new words is neither, and it is
+ * what an orchestrator does when most of its context is its own prose.
+ */
+export function checkSynthesis(input: SynthesisCheckInput): DelegationVerdict {
+  if (!input.prior) return { admitted: true };
+  const similarity = briefSimilarity(input.markdown, input.prior.bodyMarkdown);
+  if (similarity < SYNTHESIS_REPETITION_THRESHOLD) return { admitted: true };
+
+  const cited = new Set(citedIdentifiers(input.markdown).filter((item) => item.startsWith("OUT-")));
+  const priorCited = new Set(citedIdentifiers(input.prior.bodyMarkdown).filter((item) => item.startsWith("OUT-")));
+  const fresh = [...cited].filter((item) => !priorCited.has(item));
+  if (fresh.length > 0) return { admitted: true };
+
+  return {
+    admitted: false,
+    feedbackMarkdown: [
+      `Synthesis refused: it is ${Math.round(similarity * 100)}% identical to ${input.prior.synthesisId}`
+      + " and cites no outcome that one did not already cite.",
+      "",
+      "A revision earns its place by adding evidence or by changing the account. Restating the standing"
+      + " understanding in new words costs a full turn and leaves the record no better than before.",
+      "",
+      "If a finding has landed since, cite its OUT- identifier and say what it changed. If the account itself"
+      + " should change, say plainly what you now believe that you did not, and why. If neither is true, the"
+      + " understanding already stands as recorded — spend the turn on the question it leaves open instead:"
+      + " delegate an experiment, request literature, relate two components, or pause.",
+    ].join("\n"),
+  };
+}
