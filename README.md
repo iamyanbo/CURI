@@ -137,20 +137,36 @@ the state of the run:
 |---|---|
 | operator stop, or the spend ceiling was reached | exit |
 | the orchestrator paused, continuous mode off | exit; the pause stands |
-| the orchestrator paused, continuous mode on | resume the direction after waiting |
+| the orchestrator paused, continuous mode on | wait; resume only once evidence has arrived |
 | nothing delegated this turn | wait |
 
-A pause and an idle turn carry the same signal: nothing is worth doing right now. Both use the same
-backoff curve, doubling from one minute to a thirty-minute ceiling:
+**A pause is resumed by evidence, not by a clock.** Continuous mode takes a paused direction up
+again only when something has arrived that could change the judgement: a source admitted, a task
+returned, an outcome or synthesis recorded. Until then the pause stands and costs nothing.
+
+That distinction is load-bearing, and it was learned the hard way. Resuming on a timer hands the
+orchestrator the same context and asks it the same question, and given a turn it will record
+*something* rather than nothing — a restated synthesis, a re-described component map. Closing one
+of those outlets simply moved the repetition to the next. One direction spent most of its budget
+pausing and resuming every ninety seconds.
+
+An *idle* turn is different: the direction is still active and the orchestrator delegated nothing,
+so the wait grows on a backoff curve instead.
 
 ```
 1 → 2 → 4 → 8 → 16 → 30 minutes, then capped
 ```
 
-**The wait resets to one minute as soon as anything happens in the direction**: a source is
-admitted, a task is delegated or returned, an outcome is recorded, a synthesis is written, or a
-delegation is refused. Ten quiet hours therefore cost about two dozen orchestrator turns rather
-than a paid poll every few seconds.
+**That wait resets only when the direction actually moves** — a source admitted, a task delegated
+or returned, an outcome or synthesis recorded. Bookkeeping does not count, and neither does the
+pause itself: an event the loop writes about its own scheduling must not persuade it that research
+happened.
+
+Three checks keep a turn from manufacturing that signal. A synthesis that repeats the standing
+account without citing a new outcome is refused; a relationship whose description says what it
+already said records nothing; a near-duplicate component is not created. Each refusal is written
+back as feedback the orchestrator reads on its next turn, so it learns the move was empty rather
+than repeating it blind.
 
 In practice, the watcher becomes a source of wake-ups rather than a polling timer. When the
 orchestrator exhausts its current questions, it pauses, is taken up again, pauses again, and the
@@ -333,7 +349,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 111 tests
+npm test        # 118 tests
 npm run typecheck
 ```
 
