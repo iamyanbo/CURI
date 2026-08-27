@@ -429,10 +429,23 @@ enforce this.
 
 ## Findings and learnings
 
-The results in this section come from the attention/KV-cache example. Running it on a single RTX
-3060 Ti produced four findings across four research threads, then paused after judging that it had
-reached a milestone. These are bounded results from one example domain, not general claims about
-AI systems or research in general.
+Two directions have been run, on two machines, in two domains. Both are stopped and every number
+below is read from their records. A full account is in [`docs/run-report.md`](docs/run-report.md);
+these are bounded results from two example domains, not general claims about AI systems or research.
+
+| | Attention & KV-cache | Strategy generalization |
+|---|---|---|
+| Machine | Windows, RTX 3060 Ti | DGX Spark (GB10), Ubuntu aarch64 |
+| Wall clock | ~43 h | ~11 h |
+| Runs · spend | 125 · **$39.60** | 89 · **$20.53** |
+| Outcomes | **17** (12 supported, 3 bounded, 1 refuted, 1 inconclusive) | **4** (3 supported, 1 bounded) |
+| Syntheses · threads | 28 · 4 | 21 · 5 |
+| Sources admitted | 41 | 14 |
+
+Combined: 214 runs, $60.13, 71.3M input tokens, 21 recorded outcomes. The second direction is what
+the first cannot show — that the runtime is not built around one problem. It studies when a trading
+strategy found in history keeps its edge outside the window it was found in, with a decade of later
+data deliberately withheld from the machine the agents run on.
 
 ### Results from the example run
 
@@ -450,6 +463,27 @@ AI systems or research in general.
   disperses attention. Asymmetric K-INT8/V-INT4 held retrieval at 4-bit Value precision.
 - **A regime dispatcher composing all three** (`supported`) — an integration task, not another
   sweep.
+- **Randomized-Hadamard rotation fails to prevent key quantization damage** (`refuted`) — the one
+  outright refutation, and the outcome a score-maximizing loop has no way to record.
+
+Twelve further outcomes cover prompt-lookup speculation, prefill-pressure adaptive scheduling,
+failure propagation between low-bit KV quantization and speculative verification, prefix-cache
+reuse, and spectral transform coding.
+
+From the finance direction, its first experiment swept search intensity from 1 to 5,000 strategy
+variants:
+
+| variants examined | best in-sample Sharpe | out-of-sample @ 0 bps | out-of-sample @ 10 bps |
+|---|---|---|---|
+| 1 | 0.78 | 0.36 | 0.07 |
+| 100 | 3.07 | 0.87 | 0.12 |
+| 1,000 | 3.81 | 0.64 | **−0.44** |
+| 5,000 | 4.11 | 0.43 | **−0.89** |
+
+Search harder, look better in sample, do worse out of sample — and once 10 bps of cost is charged,
+the best-looking strategy of 5,000 loses money. Nothing has been evaluated against the withheld
+decade: that is an operator step, because an agent that could reach the holdout would make the
+number meaningless.
 
 ### How to interpret these results
 
@@ -497,6 +531,23 @@ already in the literature remains an open question about scale.
 - **Evidence needs calibrated language.** Left unconstrained, the orchestrator wrote "proved" and
   "established" from n=3 on a 0.5B model. Outcomes must state the envelope their evidence covers,
   and `supported` is reserved for claims whose falsifier was actually tested.
+- **An agent given a turn will use it.** Resuming a paused direction on a timer hands the
+  orchestrator the same context and the same question, and it records *something* rather than
+  nothing — a restated synthesis, a re-described component map. Three separate repetition loops
+  came from that one cause, and closing each moved the behaviour to the next. Roughly half of one
+  direction's budget went to pausing and resuming. A pause now stands until evidence arrives, and
+  an hour of quiet fell from about **$2.00 to $0.17**.
+- **Do not let the loop's own bookkeeping look like progress.** The idle backoff reset on any new
+  event, including the `direction.paused` the orchestrator writes and the `direction.resumed` the
+  supervisor writes a moment later. A scheduler must not be able to persuade itself that research
+  happened.
+- **Optional subsystems must not be able to stop the research.** A missing publishing credential
+  killed a supervisor: the failure was caught and logged, then a rejection raised inside the
+  Firestore client after that point ended the process.
+- **A provider failure is not a research failure.** Twenty-two of 125 runs failed, almost all to
+  rate limiting or a transport error. Two tasks exhausted their attempt budget without an
+  experiment ever running, and were returned as though the science had failed. Counting a rate
+  limit against a task's attempts is a known defect and is not yet fixed.
 
 ### Limits of the current evidence
 
@@ -509,8 +560,16 @@ already in the literature remains an open question about scale.
   undistinguished.
 - The runtime is intended to support other domains, but this end-to-end campaign tested only the
   attention example. Other domains require their own evaluator, replication policy and domain review.
-- The research loop runs locally because it needs a GPU and a persistent filesystem; only the
-  record and its mirror are hosted.
+- The research loop runs on the machine that holds the data and hardware it measures; only the
+  record and its mirror are hosted. The finance direction is a counterexample to the stronger claim
+  that a GPU is required — it needs neither a GPU nor much memory.
+- The finance direction's own results are not yet consistent: its search-intensity table and its
+  CPCV summary disagree on out-of-sample Sharpe, and its reported probability of backtest
+  overfitting is implausibly low. That contradiction is unresolved and those numbers should not be
+  quoted.
+- Its withheld decade has never been evaluated, and the withholding is procedural rather than
+  enforced: the tool layer refuses protected paths, but a Python script the executor writes runs
+  with the operator's permissions. Genuine isolation needs a separate user or a container.
 
 ---
 
