@@ -192,10 +192,15 @@ export function applyOrchestratorActions(store: ResearchStore, directionId: stri
     }
     if (action.name === "relate_components") {
       if (!store.relateComponents(directionId, markdown)) {
+        // Either the pair could not be resolved, or the relationship already
+        // says this. Both are worth telling the orchestrator, because otherwise
+        // it repeats the move.
         store.saveNote(directionId, runId, "runtime",
-          `Relationship ignored: name two existing COMP identifiers, source first.
-
-${markdown}`);
+          "Relationship not recorded. Either it did not name two existing COMP identifiers with the source"
+          + " first, or that pair already carries this relationship and nothing in the text changed."
+          + " A relationship is a standing fact: record one when it is new or when your account of it"
+          + " changes, not to confirm what the map already shows.\n\n"
+          + compact(markdown, 1_000));
       }
       continue;
     }

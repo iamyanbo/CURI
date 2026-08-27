@@ -462,3 +462,30 @@ test("a pause and its own resume do not reset the idle backoff", () => {
   assert.match(loop, /event_type IN \(/);
   assert.match(loop, /PROGRESS_EVENTS/);
 });
+
+test("restating an unchanged relationship records nothing", () => {
+  // The row was deduped but the event was still appended, and the event counts
+  // as progress — so an orchestrator with nothing new to say restated the same
+  // relationships every minute, each time at the price of a full turn.
+  const root = mkdtempSync(join(tmpdir(), "lean-research-rel2-"));
+  const store = ResearchStore.open(join(root, "research.sqlite"));
+  try {
+    store.createDirection({ id: "direction", title: "D", briefMarkdown: "b",
+      constraintsMarkdown: "", domainPath: root });
+    const a = store.createComponent("direction", "# A\n\nThread A.");
+    const b = store.createComponent("direction", "# B\n\nThread B.");
+    const text = `${a} constrains ${b}: eviction limits what the scheduler can promise under memory pressure.`;
+    assert.ok(store.relateComponents("direction", text));
+    const events = () => (store.db.prepare(
+      "SELECT COUNT(*) n FROM events WHERE event_type='component.related'").get() as { n: number }).n;
+    const after = events();
+    // Same claim, trivially reworded: nothing changed, so nothing is recorded.
+    assert.equal(store.relateComponents("direction",
+      `${a} constrains ${b}: eviction limits what the scheduler is able to promise under memory pressure.`), null);
+    assert.equal(events(), after, "no event may be appended for an unchanged relationship");
+    // A materially different account of the pair still records.
+    assert.ok(store.relateComponents("direction",
+      `${a} enables ${b}: retained keys give the dispatcher a cheap signal for regime detection.`));
+    assert.equal(events(), after + 1);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});

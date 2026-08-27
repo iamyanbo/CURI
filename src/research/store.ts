@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import Database from "better-sqlite3";
 
+import { briefSimilarity } from "./delegation.js";
+
 import type {
   LeanDirection, LeanSource, LeanTask, OutcomeVerdict, ResearchContext,
   ResearchDirectionInput, RunRole, RunState, SourceState, TaskMode,
@@ -332,9 +334,15 @@ export class ResearchStore {
     // second edge: the pair is the identity, and the latest account of it is the
     // one worth showing.
     const existing = this.db.prepare(
-      `SELECT relation_id FROM component_relations
+      `SELECT relation_id, relationship_md FROM component_relations
        WHERE direction_id=? AND from_component_id=? AND to_component_id=?`,
-    ).get(directionId, from, to) as { relation_id: string } | undefined;
+    ).get(directionId, from, to) as { relation_id: string; relationship_md: string } | undefined;
+    // Re-stating a relationship that already says the same thing is not a
+    // change. It used to update the row and append an event anyway, and because
+    // the event counts as progress it reset the idle backoff — so an
+    // orchestrator with nothing new to say could restate the same relationships
+    // every minute indefinitely, each time at the price of a full turn.
+    if (existing && briefSimilarity(markdown, String(existing.relationship_md ?? "")) >= 0.8) return null;
     const id = existing?.relation_id ?? researchId("REL");
     this.db.prepare(
       `INSERT INTO component_relations(relation_id,direction_id,from_component_id,to_component_id,relationship_md,created_at)
