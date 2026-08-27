@@ -515,3 +515,16 @@ test("a near-duplicate component is refused, a genuinely new thread is not", () 
     assert.equal((store.db.prepare("SELECT COUNT(*) n FROM components").get() as { n: number }).n, 2);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a paused direction is resumed by evidence, not by a timer", () => {
+  // Resuming on a timer hands the orchestrator the same context and asks the
+  // same question. It will find something to record rather than nothing —
+  // restating a synthesis, re-describing the component map — because that is
+  // what a turn is for. Three separate repetition loops came from this.
+  const source = readFileSync(join(process.cwd(), "src", "research", "runtime.ts"), "utf8");
+  const loop = source.slice(source.indexOf("export async function runResearchSupervisor"));
+  assert.match(loop, /if \(paused && latestEvent > lastSeenEvent\)/);
+  // And the watcher is what makes that possible: an admitted source is progress.
+  const list = source.slice(source.indexOf("const PROGRESS_EVENTS"), source.indexOf("] as const;", source.indexOf("const PROGRESS_EVENTS")));
+  assert.ok(list.includes("source.relevant"));
+});

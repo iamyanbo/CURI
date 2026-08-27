@@ -330,12 +330,19 @@ export async function runResearchSupervisor(input: { projectRoot: string; direct
           `SELECT COALESCE(MAX(seq),0) seq FROM events WHERE direction_id=? AND event_type IN (${
             PROGRESS_EVENTS.map(() => "?").join(",")})`,
         ).get(input.directionId, ...PROGRESS_EVENTS) as { seq: number }).seq);
-        if (paused) {
-          // The pause stands in the record; continuous mode only decides whether
-          // the direction is taken up again once something has moved on.
+        // A pause is a judgement that nothing is worth doing yet. Taking the
+        // direction up again on a timer hands the orchestrator the same context
+        // and asks the same question, and it will find something to record
+        // rather than nothing — restating a synthesis, re-describing the
+        // component map — because that is what a turn is for. So a paused
+        // direction is resumed only once evidence has actually arrived since the
+        // pause: a source admitted, a task returned, an outcome or synthesis
+        // recorded. Until then the pause stands and costs nothing.
+        if (paused && latestEvent > lastSeenEvent) {
           store.db.prepare("UPDATE directions SET status='active',updated_at=? WHERE direction_id=?").run(researchNow(), input.directionId);
           store.appendEvent(input.directionId, null, "direction.resumed", "system",
-            "Continuous mode took the paused direction up again. The pause and its reasoning remain recorded.");
+            "Continuous mode took the paused direction up again: evidence has arrived since it paused."
+            + " The pause and its reasoning remain recorded.");
         }
       } finally { store.close(); }
 
