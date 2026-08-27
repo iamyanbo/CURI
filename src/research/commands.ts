@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { requestResearchStop, watcherStopFile } from "./control.js";
@@ -41,7 +41,7 @@ function usage(): void {
   console.log([
     "CURI — Cumulative Research & Inquiry:",
     "  research reset --archive",
-    "  research init --direction ID --title TEXT --brief MARKDOWN --domain PATH [--fixed TEXT] [--open TEXT] [--topic TEXT]",
+    "  research init --direction ID --title TEXT (--brief MARKDOWN|--brief-file PATH) --domain PATH [--fixed TEXT] [--open TEXT] [--topic TEXT]",
     "  research run|turn [--direction ID] [--model MODEL] [--resume] [--no-watch]",
     "  research supervisor start|status|daemon [--direction ID] [--model MODEL]",
     "  research watch start|stop|status|sweep|daemon [--direction ID] [--model MODEL]",
@@ -67,8 +67,10 @@ export async function handleResearchCommand(projectRoot: string, args: string[])
   }
   if (action === "init") {
     const id = value(args, "direction") ?? `research-${Date.now()}`;
-    const brief = value(args, "brief"); const domain = value(args, "domain");
-    if (!brief || !domain) throw new Error("research init requires --brief and --domain");
+    const briefFile = value(args, "brief-file");
+    const brief = briefFile ? readFileSync(resolve(projectRoot, briefFile), "utf8") : value(args, "brief");
+    const domain = value(args, "domain");
+    if (!brief || !domain) throw new Error("research init requires --brief or --brief-file, and --domain");
     const domainPath = resolve(projectRoot, domain); if (!existsSync(domainPath)) throw new Error(`domain does not exist: ${domainPath}`);
     const constraints = [...values(args, "fixed"), ...values(args, "negotiable").map((item) => `Negotiable: ${item}`),
       ...values(args, "open").map((item) => `Open direction: ${item}`)].map((item) => `- ${item}`).join("\n");

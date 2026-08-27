@@ -24,7 +24,7 @@ function usage(): void {
   console.log([
     "CURI — Cumulative Research & Inquiry",
     "",
-    "  cli.ts research init --direction ID --title TEXT --brief MARKDOWN --domain PATH",
+    "  cli.ts research init --direction ID --title TEXT (--brief MARKDOWN|--brief-file PATH) --domain PATH",
     "                       [--fixed TEXT] [--open TEXT] [--topic TEXT] [--watch-every SECONDS]",
     "  cli.ts research supervisor start|status|daemon      the research loop",
     "  cli.ts research watch start|stop|status|sweep       literature intake",
