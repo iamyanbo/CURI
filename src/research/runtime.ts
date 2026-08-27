@@ -14,6 +14,25 @@ import { startMirrorSync } from "./mirror-sync.js";
 import { ResearchStore, researchNow } from "./store.js";
 import { watcherSweep as sweep } from "./watcher.js";
 
+/**
+ * Event types that mean the direction actually moved.
+ *
+ * The idle backoff resets when something happens, and "something" was any new
+ * event — including `direction.paused`, written by the orchestrator's own turn,
+ * and `direction.resumed`, written by this loop a moment later. Every pause
+ * therefore reset the backoff to one minute and the supervisor re-asked a
+ * question whose context had not changed, at the price of a full turn. One live
+ * direction spent about ninety minutes doing nothing else.
+ *
+ * An allowlist rather than a denylist: a new event type should have to earn the
+ * right to wake the loop, not inherit it.
+ */
+const PROGRESS_EVENTS = [
+  "source.relevant", "task.delegated", "task.returned", "executor.succeeded",
+  "outcome.supported", "outcome.refuted", "outcome.bounded", "outcome.inconclusive", "outcome.blocked",
+  "synthesis.recorded", "component.created", "component.related",
+] as const;
+
 export function researchStateDir(projectRoot: string): string { return stateDir(projectRoot); }
 export function researchDbPath(projectRoot: string): string { return join(researchStateDir(projectRoot), "research.sqlite"); }
 export function openResearchStore(projectRoot: string): ResearchStore { return ResearchStore.open(researchDbPath(projectRoot)); }
@@ -301,8 +320,10 @@ export async function runResearchSupervisor(input: { projectRoot: string; direct
       const store = openResearchStore(input.projectRoot);
       let latestEvent = lastSeenEvent;
       try {
-        latestEvent = Number((store.db.prepare("SELECT COALESCE(MAX(seq),0) seq FROM events WHERE direction_id=?")
-          .get(input.directionId) as { seq: number }).seq);
+        latestEvent = Number((store.db.prepare(
+          `SELECT COALESCE(MAX(seq),0) seq FROM events WHERE direction_id=? AND event_type IN (${
+            PROGRESS_EVENTS.map(() => "?").join(",")})`,
+        ).get(input.directionId, ...PROGRESS_EVENTS) as { seq: number }).seq);
         if (paused) {
           // The pause stands in the record; continuous mode only decides whether
           // the direction is taken up again once something has moved on.

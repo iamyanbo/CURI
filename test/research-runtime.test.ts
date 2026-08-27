@@ -441,3 +441,24 @@ test("the orchestrator context shows standing understanding, not superseded draf
   assert.match(context, /live\.slice\(0, 8\)/);
   assert.match(context, /body_md\), 1_200\)/);
 });
+
+test("a pause and its own resume do not reset the idle backoff", () => {
+  // The backoff reset on any new event, and the pause/resume pair is written by
+  // the loop itself. Every pause therefore restarted the wait at one minute and
+  // the orchestrator was re-asked an unchanged question at full price: one live
+  // direction spent about ninety minutes doing only that.
+  const source = readFileSync(join(process.cwd(), "src", "research", "runtime.ts"), "utf8");
+  const list = source.slice(source.indexOf("const PROGRESS_EVENTS"), source.indexOf("] as const;", source.indexOf("const PROGRESS_EVENTS")));
+  for (const bookkeeping of ["direction.paused", "direction.resumed", "orchestrator.started",
+    "orchestrator.succeeded", "synthesis.refused", "task.delegation_refused", "watcher.started"]) {
+    assert.ok(!list.includes(bookkeeping), `${bookkeeping} must not reset the backoff`);
+  }
+  for (const progress of ["task.returned", "outcome.supported", "synthesis.recorded",
+    "component.created", "source.relevant"]) {
+    assert.ok(list.includes(progress), `${progress} should reset the backoff`);
+  }
+  // The query must actually filter, not just define the list.
+  const loop = source.slice(source.indexOf("export async function runResearchSupervisor"));
+  assert.match(loop, /event_type IN \(/);
+  assert.match(loop, /PROGRESS_EVENTS/);
+});
