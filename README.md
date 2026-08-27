@@ -333,7 +333,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 110 tests
+npm test        # 111 tests
 npm run typecheck
 ```
 
@@ -492,3 +492,9 @@ already in the literature remains an open question about scale.
   attention example. Other domains require their own evaluator, replication policy and domain review.
 - The research loop runs locally because it needs a GPU and a persistent filesystem; only the
   record and its mirror are hosted.
+
+---
+
+## License
+
+MIT. Bring your own API key and run it; see `LICENSE`.
