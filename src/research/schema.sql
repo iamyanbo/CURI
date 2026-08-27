@@ -36,6 +36,12 @@ CREATE TABLE component_relations (
   created_at TEXT NOT NULL
 );
 
+-- A relationship is a fact about a pair of components, not an event: without
+-- this, the orchestrator re-recorded the same relationship every turn it still
+-- held, and the thread graph filled with duplicate edges.
+CREATE UNIQUE INDEX component_relations_pair
+  ON component_relations(direction_id, from_component_id, to_component_id);
+
 CREATE TABLE sources (
   source_id TEXT PRIMARY KEY,
   direction_id TEXT NOT NULL REFERENCES directions(direction_id),

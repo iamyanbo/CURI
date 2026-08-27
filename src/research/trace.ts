@@ -86,10 +86,12 @@ export function traceSegments(steps: Array<Record<string, unknown>>, runEndMs: n
       });
     }
   }
-  // Tool calls still open at the end are running right now.
+  // Tool calls still open at the end are running right now, and are marked as
+  // such: a long-running check is the most common reason a lane looks static,
+  // and "still running" reads very differently from "finished".
   for (const call of openCalls.values()) {
     segments.push({
-      kind: "tool", label: String(call.toolName ?? "tool"),
+      kind: "tool", label: String(call.toolName ?? "tool"), live: true,
       startMs: Number(call.atMs ?? 0), endMs: runEndMs, isError: false, seq: Number(call.seq ?? 0),
     });
   }

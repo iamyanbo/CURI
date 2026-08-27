@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,7 +11,7 @@ import type {
 } from "./types.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const RESEARCH_SCHEMA_VERSION = 8;
+export const RESEARCH_SCHEMA_VERSION = 9;
 
 const V7_MIGRATION = `
 ALTER TABLE tasks ADD COLUMN task_kind TEXT NOT NULL DEFAULT 'research';
@@ -65,6 +65,53 @@ CREATE INDEX synthesis_components_component ON synthesis_components(component_id
 ALTER TABLE watcher_config ADD COLUMN max_read INTEGER NOT NULL DEFAULT 3;
 `;
 
+/**
+ * A relationship between two components is a fact about the pair, not an event.
+ * Without a uniqueness constraint the orchestrator re-recorded the same
+ * relationship on every turn that still considered it true: one live direction
+ * reached 44 rows describing 8 pairs, and the dashboard drew all 44, which is
+ * why its graph became an unreadable tangle. The newest description of a pair
+ * wins, because understanding of a relationship is meant to evolve.
+ */
+const V9_MIGRATION = `
+DELETE FROM component_relations WHERE relation_id NOT IN (
+  SELECT relation_id FROM (
+    SELECT relation_id, ROW_NUMBER() OVER (
+      PARTITION BY direction_id, from_component_id, to_component_id
+      ORDER BY created_at DESC, relation_id DESC) rank
+    FROM component_relations)
+  WHERE rank = 1);
+CREATE UNIQUE INDEX IF NOT EXISTS component_relations_pair
+  ON component_relations(direction_id, from_component_id, to_component_id);
+`;
+
+/**
+ * Daemons other than this process holding the database's directory open.
+ *
+ * A schema migration rewrites a database that running processes have already
+ * opened with the previous version's code, and those processes fail the moment
+ * they next open the store — a version bump applied under a live dashboard took
+ * it to HTTP 500 with no warning. Migrating is therefore refused while anything
+ * else is running. The current process is excluded: a daemon that has just
+ * started is the one applying the migration, and it is running the new code.
+ */
+function otherLiveDaemons(databasePath: string): string[] {
+  const dir = dirname(databasePath);
+  let entries: string[] = [];
+  try { entries = readdirSync(dir); } catch { return []; }
+  const live: string[] = [];
+  for (const entry of entries) {
+    if (!entry.endsWith(".pid")) continue;
+    try {
+      const pid = Number(readFileSync(join(dir, entry), "utf8").trim());
+      if (!Number.isFinite(pid) || pid === process.pid) continue;
+      process.kill(pid, 0);
+      live.push(`${entry.replace(/[.]pid$/, "")} (pid ${pid})`);
+    } catch { /* a stale pid file is not a live process */ }
+  }
+  return live;
+}
+
 export function researchNow(): string { return new Date().toISOString(); }
 export function researchHash(value: string | Buffer): string {
   return createHash("sha256").update(value).digest("hex");
@@ -102,7 +149,18 @@ export class ResearchStore {
     // Migrations apply in sequence so a database several versions behind is
     // brought forward rather than rejected.
     let current = version;
-    for (const step of [{ from: 6, to: 7, sql: V7_MIGRATION }, { from: 7, to: 8, sql: V8_MIGRATION }]) {
+    if (current !== RESEARCH_SCHEMA_VERSION) {
+      const live = otherLiveDaemons(path);
+      if (live.length > 0) {
+        db.close();
+        throw new Error(
+          `refusing to migrate the research database from v${current} to v${RESEARCH_SCHEMA_VERSION} `
+          + `while research is running: ${live.join(", ")}. Those processes are running the previous `
+          + "version's code and would fail against a migrated database. Stop them first.");
+      }
+    }
+    for (const step of [{ from: 6, to: 7, sql: V7_MIGRATION }, { from: 7, to: 8, sql: V8_MIGRATION },
+      { from: 8, to: 9, sql: V9_MIGRATION }]) {
       if (current !== step.from) continue;
       db.pragma("wal_checkpoint(TRUNCATE)");
       const backup = `${path}.v${step.from}.bak`;
@@ -270,10 +328,19 @@ export class ResearchStore {
       "SELECT 1 FROM components WHERE component_id=? AND direction_id=?").get(id, directionId));
     if (known.length < 2) return null;
     const [from, to] = known;
-    const id = researchId("REL");
+    // Re-recording a relationship updates its description rather than adding a
+    // second edge: the pair is the identity, and the latest account of it is the
+    // one worth showing.
+    const existing = this.db.prepare(
+      `SELECT relation_id FROM component_relations
+       WHERE direction_id=? AND from_component_id=? AND to_component_id=?`,
+    ).get(directionId, from, to) as { relation_id: string } | undefined;
+    const id = existing?.relation_id ?? researchId("REL");
     this.db.prepare(
       `INSERT INTO component_relations(relation_id,direction_id,from_component_id,to_component_id,relationship_md,created_at)
-       VALUES (?,?,?,?,?,?)`,
+       VALUES (?,?,?,?,?,?)
+       ON CONFLICT(direction_id,from_component_id,to_component_id)
+       DO UPDATE SET relationship_md=excluded.relationship_md, created_at=excluded.created_at`,
     ).run(id, directionId, from, to, markdown, researchNow());
     this.appendEvent(directionId, null, "component.related", "orchestrator", markdown);
     return id;

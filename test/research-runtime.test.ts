@@ -181,7 +181,7 @@ test("v6 research databases migrate in place with a recoverable backup", () => {
     DROP TABLE component_syntheses;
     ALTER TABLE watcher_config DROP COLUMN max_read;
     ALTER TABLE tasks DROP COLUMN task_kind;
-    DELETE FROM research_schema_meta WHERE version IN (7,8);
+    DELETE FROM research_schema_meta WHERE version > 6;
     INSERT INTO research_schema_meta(version,applied_at,checksum) VALUES (6,'legacy','legacy');
   `);
   legacy.close();
@@ -354,4 +354,53 @@ test("continuous running is availability, not a prompt that forbids stopping", (
   let elapsed = 0; let turns = 0;
   for (let i = 0; elapsed < 10 * 3_600_000; i++) { elapsed += idleBackoffMs(i); turns++; }
   assert.ok(turns < 30, `expected few turns while quiet, got ${turns}`);
+});
+
+test("a relationship recorded twice updates the edge instead of adding one", () => {
+  // The orchestrator re-states a relationship on every turn it still holds. One
+  // live direction reached 44 rows describing 8 pairs, and the thread graph drew
+  // all 44 — an unreadable tangle rather than a map.
+  const root = mkdtempSync(join(tmpdir(), "lean-research-rel-"));
+  const store = ResearchStore.open(join(root, "research.sqlite"));
+  try {
+    store.createDirection({ id: "direction", title: "D", briefMarkdown: "b",
+      constraintsMarkdown: "", domainPath: root });
+    const a = store.createComponent("direction", "# A\n\nThread A.");
+    const b = store.createComponent("direction", "# B\n\nThread B.");
+    const first = store.relateComponents("direction", `${a} constrains ${b}: early account.`);
+    const second = store.relateComponents("direction", `${a} constrains ${b}: revised account.`);
+    assert.equal(first, second, "the pair keeps one identity");
+    const rows = store.db.prepare("SELECT relationship_md FROM component_relations").all() as
+      Array<{ relationship_md: string }>;
+    assert.equal(rows.length, 1);
+    // The latest account wins: understanding of a relationship is meant to evolve.
+    assert.match(rows[0]!.relationship_md, /revised account/);
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a schema migration refuses to run while other daemons are live", () => {
+  // A version bump applied under a running dashboard took it to HTTP 500: the
+  // old code opens the migrated database and rejects it as incompatible. The
+  // migration is the thing that must yield, not the running process.
+  const root = mkdtempSync(join(tmpdir(), "lean-research-guard-"));
+  const path = join(root, "research.sqlite");
+  const created = ResearchStore.open(path);
+  created.close();
+  const legacy = new Database(path);
+  legacy.exec("DELETE FROM research_schema_meta WHERE version > 8; INSERT OR REPLACE INTO research_schema_meta(version,applied_at,checksum) VALUES (8,'legacy','legacy');");
+  legacy.close();
+  // A pid file naming this process: unquestionably alive, and not our own pid
+  // from the store's point of view only if it differs, so use the parent shell's
+  // check indirectly by writing our own and asserting the exclusion instead.
+  writeFileSync(join(root, "research-dashboard-direction.pid"), String(process.pid), "utf8");
+  const ownProcessIgnored = ResearchStore.open(path);
+  ownProcessIgnored.close();
+
+  // A different live pid does block it.
+  writeFileSync(join(root, "research-dashboard-direction.pid"), String(process.ppid), "utf8");
+  const stale = new Database(path);
+  stale.exec("DELETE FROM research_schema_meta WHERE version > 8; INSERT OR REPLACE INTO research_schema_meta(version,applied_at,checksum) VALUES (8,'legacy','legacy');");
+  stale.close();
+  assert.throws(() => ResearchStore.open(path), /refusing to migrate the research database/);
+  rmSync(root, { recursive: true, force: true });
 });

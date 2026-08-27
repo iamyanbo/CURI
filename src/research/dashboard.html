@@ -171,7 +171,8 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .mix{display:flex;height:3px;border-radius:2px;overflow:hidden;margin-top:5px;background:var(--bg)}
 .mix i{display:block;height:100%}
 .track{position:relative;height:34px;background:var(--bg)}
-.seg{position:absolute;top:8px;height:12px;border-radius:3px;min-width:2px}
+.seg{position:absolute;top:8px;height:12px;border-radius:3px;min-width:2px;overflow:hidden}
+.seg-label{display:block;padding:0 6px;font-size:10px;line-height:12px;color:#0b0f14;font-weight:600;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
 .seg.thinking{background:var(--violet)}
 .seg.tool{background:#6f8fd0}
 .seg.model{background:var(--info)}
@@ -741,10 +742,15 @@ function rollLane(l,w){
     .map(([k,c])=>`<i style="width:${((b[k]||0)/total*100).toFixed(2)}%;background:${c}"></i>`).join('');
   const segs=arr(l.segments).filter(s=>l.startMs+s.endMs>=w.from&&l.startMs+s.startMs<=w.to).map(s=>{
     const a=l.startMs+s.startMs,z=l.startMs+s.endMs,left=Math.max(0,pct(a)),right=Math.min(100,pct(z));
+    const wide=right-left;
+    // A long check rendered as an unlabelled block reads as dead space. Once a
+    // segment is wide enough to hold text, it says what ran and for how long,
+    // rather than hiding both in a tooltip.
+    const label=wide>=7?`<span class="seg-label">${esc(s.label)} · ${fmt(s.endMs-s.startMs)}${s.live?' · running':''}</span>`:'';
     return `<div class="seg ${s.isError?'err':esc(s.kind)} ${s.live?'live':''} ${selSeq===s.seq&&lane===l.id?'sel':''}"
       data-seq="${esc(s.seq)}" data-lane="${esc(l.id)}"
-      data-tip="${esc(s.label+' · '+fmt(s.endMs-s.startMs)+' · '+clock(a)+' → '+clock(z)+(s.isError?' · error':''))}"
-      style="left:${left}%;width:${Math.max(0.25,right-left)}%"></div>`}).join('');
+      data-tip="${esc(s.label+' · '+fmt(s.endMs-s.startMs)+' · '+clock(a)+' → '+clock(z)+(s.isError?' · error':'')+(s.live?' · still running':''))}"
+      style="left:${left}%;width:${Math.max(0.25,wide)}%">${label}</div>`}).join('');
   const left=Math.max(0,pct(l.startMs)),right=Math.min(100,pct(l.endMs));
   return `<div class="lane ${lane===l.id?'active':''}" data-lane="${esc(l.id)}">
     <div class="lane-name"><b>${esc(l.role)}</b>
