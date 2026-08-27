@@ -9,8 +9,12 @@ consoles moving while you speak; each section says what to show and what the vie
 
 **Before recording**
 
+- Run `research publish --project $PROJECT` first: the mirror only updates while a supervisor is
+  running, so a stopped pipeline leaves it stale.
 - Supervisor, watcher and dashboard running; a direction active with work in flight.
 - Local dashboard open at `http://127.0.0.1:7331`, the **Execution** view selected.
+- The finance direction's dashboard forwarded from the second machine:
+  `ssh -i ~/.ssh/<key> -N -L 7332:127.0.0.1:7332 <user>@<host>`, then `http://127.0.0.1:7332`.
 - The public mirror open in a second tab: `https://research-mirror-qdqttyl3jq-uc.a.run.app`.
 - A third tab on the Cloud Run service page for `research-mirror`, and a fourth on the Firestore
   data browser showing `directions/resource-adaptive-inference`.
@@ -60,8 +64,8 @@ Move through the dashboard, narrating what is on screen. Do not describe feature
 
 **Direction and threads** (~15s)
 > This direction asks how transformer inference mechanisms adapt across memory-pressure and
-> long-context regimes. There are four research threads, each carrying its own evolving
-> understanding, and six recorded outcomes from the run.
+> long-context regimes. Four research threads, each carrying its own evolving understanding, and
+> seventeen recorded outcomes across forty-three hours.
 
 **The piano roll** (~25s)
 > This is the actual execution, on a real time axis: reasoning in one colour, tool calls in
@@ -71,7 +75,8 @@ Move through the dashboard, narrating what is on screen. Do not describe feature
 
 **The agent trace** (~25s)
 > Clicking a run opens the transcript: the model's reasoning, the experiment code it wrote, the
-> checks it ran. This one has 224 steps.
+> checks it ran. A hundred and twenty-two of the hundred and twenty-five runs carry one, published
+> without publishing my machine — I'll come back to how.
 
 **A finding, with its envelope** (~25s)
 > Here is the result I would point at. The agent tested whether attention-mass KV-cache eviction
@@ -80,9 +85,28 @@ Move through the dashboard, narrating what is on screen. Do not describe feature
 > hypothesis, and it was recorded as `bounded`, not rewritten into a success. Every finding ends
 > with the envelope its evidence covers and what would not follow from it.
 
-**The agent stopping** (~15s)
-> And here the orchestrator paused the direction itself, because it judged a milestone reached.
-> Nothing crashed. That is a decision, recorded with its reasoning.
+**A refutation** (~15s)
+> And here it recorded a refutation: randomized-Hadamard rotation does not prevent key quantization
+> damage. Twelve supported, three bounded, one refuted, one inconclusive. A loop that keeps whatever
+> improved the number has nowhere to put that fourth category.
+
+**The agent stopping** (~10s)
+> And here the orchestrator paused the direction itself, judging nothing worth doing yet. It then
+> sat at zero cost until new evidence arrived. Not a timer — evidence.
+
+**A second domain, on a second machine** (~20s)
+> This is the same runtime on a DGX Spark, studying something completely different: when a trading
+> strategy found in historical data keeps its edge outside the window it was found in. Its first
+> experiment swept search intensity from one to five thousand strategy variants.
+>
+> Best in-sample Sharpe climbs from 0.78 to 4.11 as you search harder. Out of sample it *falls*. And
+> once you charge ten basis points of trading cost, the best-looking strategy of five thousand
+> returns minus 0.89. That is the project's whole thesis, measured in a domain it was not built for.
+>
+> A decade of later data — 2016 to 2026 — sits outside that machine entirely. The agent has never
+> seen it.
+
+*On screen:* the finance dashboard, then the search-intensity table.
 
 ---
 
@@ -119,7 +143,11 @@ This is the required proof beat. Show, do not assert.
 > home directory, credential values. Anything that still matches stops the publish. It is a gate,
 > not a filter.
 >
-> It is open source, MIT, and it runs locally on your own API key. Cloud is optional.
+> It is open source under MIT, and it runs locally on your own API key. Cloud is optional.
+>
+> And the last thing: the finance direction has never seen 2016 onward. Let's find out.
+
+*On screen (if time allows):* the holdout evaluation running against the withheld decade.
 
 ---
 
@@ -129,7 +157,14 @@ This is the required proof beat. Show, do not assert.
   trace; a system that takes 96 minutes on one experiment is more honest than a staged loop.
 - **The strongest 20 seconds** are the refuted hypothesis and the recorded pause. Both are things a
   score-maximizing loop cannot produce. If you cut for time, cut a dashboard view, not those.
-- **Say the numbers you can defend.** 51 runs, $13.44 recorded spend, 15.9M input and 424k output
-  tokens, six recorded outcomes across four research threads — five supported, one bounded.
+- **Say the numbers you can defend.** Across both directions: 214 runs, $60.13, 71.3M input tokens,
+  21 recorded outcomes. The attention direction alone: 125 runs, $39.60, 17 outcomes — 12 supported,
+  3 bounded, 1 refuted, 1 inconclusive.
+- **Do not quote the finance CPCV or PBO figures.** That table disagrees with the search-intensity
+  table on out-of-sample Sharpe and reports an implausibly low probability of backtest overfitting.
+  The search-intensity numbers are solid; those are not, and the contradiction is unresolved.
+- **The strongest possible ending is the holdout, run live.** Ten years the agent has never seen,
+  evaluated on camera. It costs nothing — local Python against local files — and whichever way it
+  lands it is a real result. Do not do it off camera and report the outcome.
 - Do not claim novelty. The findings largely re-derive published work, and the video is stronger
   for saying so before anyone else does.

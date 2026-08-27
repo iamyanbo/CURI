@@ -126,6 +126,10 @@ Set the question before the answer:
 >
 > The result: **zero percent on non-local needle retrieval at fifty percent cache budget.**
 > Statistically indistinguishable from evicting at random.
+>
+> And later in the run it recorded something a score-maximizing loop structurally cannot: a
+> refutation. Randomized-Hadamard rotation does not prevent key quantization damage. Twelve
+> supported, three bounded, one refuted, one inconclusive — four categories, not one.
 
 Then the mechanism, then — importantly — the caveats:
 
@@ -177,6 +181,22 @@ and finally the fix.*
 > A 400-step trace limit was hit by one long attempt, and the trace just stopped. The run looked
 > idle for an hour while it was working. I misdiagnosed it at first. Any limit that discards data
 > has to be loud — it's now 20,000 steps and truncation is written into the trace as a marker.
+
+**An agent given a turn will use it.**
+> This is the one I'd most want another builder to hear. The orchestrator can pause when there's
+> nothing worth doing — and continuous mode resumed it on a timer, which hands it the same context
+> and asks the same question. Given a turn, it records *something* rather than nothing: a restated
+> synthesis, a re-described map of its own threads. I fixed the restated syntheses; it moved to
+> relationships. I fixed those; it reworded them to slip past the check. Three loops, one cause.
+>
+> Roughly half of one direction's budget went to pausing and resuming. The fix wasn't a better
+> duplicate check, it was to stop resuming on a clock — a pause now stands until evidence arrives.
+> An hour of quiet went from about two dollars to seventeen cents, and recorded findings went up.
+
+**A scheduler must not mistake its own bookkeeping for progress.**
+> The backoff reset on any new event — including the pause the orchestrator writes and the resume
+> the supervisor writes a moment later. The loop was persuading itself that research had happened
+> by writing about its own scheduling.
 
 **"Run forever" is a scheduling problem.**
 > Giving the agent permission to stop created a new bug: continuous mode woke the paused direction
@@ -249,7 +269,11 @@ End on the limitations, not a call to action:
   credibility than any amount of narration about robustness.
 - **Don't stage a fast loop.** One executor attempt took 96 minutes. Say that. A demo that implies
   experiments finish in seconds invites the obvious question about how real they are.
-- **Numbers you can defend:** 51 runs, $13.44, 15.9M input tokens, 424k output, 6 recorded
-  outcomes (5 supported, 1 bounded), 7 syntheses, 38 admitted sources, 4 research threads.
+- **Numbers you can defend:** across two directions, 214 runs, $60.13, 71.3M input tokens, 21
+  recorded outcomes. Attention: 125 runs, $39.60, 17 outcomes (12 supported, 3 bounded, 1 refuted,
+  1 inconclusive), 28 syntheses, 41 sources, 4 threads. Finance: 89 runs, $20.53, 4 outcomes,
+  21 syntheses, 5 threads.
+- **Do not quote the finance CPCV or PBO figures.** That table disagrees with the search-intensity
+  table on out-of-sample Sharpe and the contradiction is unresolved.
 - **Do not claim novelty anywhere**, including the title and thumbnail. The video's credibility is
   the whole asset.

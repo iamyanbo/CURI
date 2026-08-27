@@ -6,10 +6,15 @@
 
 I spent a few days building an autonomous research system called CURI — Cumulative Research &
 Inquiry. It runs Gemini 3.7 Flash agents through Genkit, keeps its record in Firestore, and serves
-a public read-only mirror from Cloud Run. It ran for about twenty hours on one consumer GPU, spent
-$13.44, and produced six recorded findings.
+a public read-only mirror from Cloud Run.
 
-Three of those findings reproduce results that are already in the literature. I want to lead with
+Two directions have run on it. The first spent 43 hours and $39.60 on one consumer GPU studying
+transformer inference, and recorded 17 outcomes — 12 supported, 3 bounded, 1 refuted, 1
+inconclusive. The second ran 11 hours and $20.53 on a DGX Spark studying something entirely
+different: when a trading strategy found in historical data keeps its edge outside the window it was
+found in. Combined: 214 runs, $60.13, 71.3M input tokens, 21 recorded findings.
+
+Its three best-known results reproduce work that is already in the literature. I want to lead with
 that, because the interesting part of this project is not what it found. It is what it was built
 *not* to do.
 
@@ -85,7 +90,66 @@ reports and builds per-channel key quantization on.
 
 That is the honest result of a system with a consumer GPU and a few days. What is not replication
 is *how* they were reached: independently re-derived on hardware I control, with controls, and with
-the failures kept in the record instead of discarded.
+the failures kept in the record instead of discarded. Later in the run it also recorded a straight
+refutation — randomized-Hadamard rotation does not prevent key quantization damage — which is the
+category a score-maximizing loop has nowhere to put.
+
+## The second direction, which is the one that tests the claim
+
+A system that works on the problem it was built for has proved little. So the second direction runs
+on different hardware, in a different field, with a question I care about: when does a trading
+strategy found in historical data keep its edge outside the window it was found in?
+
+It gets Ken French daily factor and industry returns through 2015. Everything from 2016 to 2026 —
+2,637 trading days — is written outside the project, in no worktree, reachable by no relative path
+from the agent's sandbox. The split is temporal, not random, because in this domain a random split
+leaks: adjacent days share regime, volatility cluster and often the same position.
+
+Its first experiment swept search intensity from 1 to 5,000 strategy variants:
+
+| variants examined | best in-sample Sharpe | out-of-sample @ 0 bps | out-of-sample @ 10 bps |
+|---|---|---|---|
+| 1 | 0.78 | 0.36 | 0.07 |
+| 100 | 3.07 | 0.87 | 0.12 |
+| 1,000 | 3.81 | 0.64 | **−0.44** |
+| 5,000 | 4.11 | 0.43 | **−0.89** |
+
+Search harder, look better in sample, do worse out of sample — and once you charge ten basis points
+of trading cost, the best-looking strategy of five thousand loses money. That is the same thesis the
+whole system rests on, measured in a domain it was not designed for.
+
+Two honest caveats. Its own two result files disagree — the CPCV summary reports out-of-sample
+Sharpe around 2.6 where the sweep reports 0.43–0.87, with an implausibly low probability of backtest
+overfitting — and that contradiction is unresolved. And nothing has been evaluated against the
+withheld decade, because that is an operator step: an agent that could reach the holdout would make
+the number meaningless.
+
+## The most expensive thing I learned
+
+An agent given a turn will use it.
+
+The orchestrator can pause a direction when nothing is worth doing — that permission is the feature
+I'd defend hardest. But continuous mode resumed a paused direction on a *timer*, which hands it the
+same context and asks it the same question. Given a turn, a language model records something rather
+than nothing.
+
+So it restated its standing synthesis. I measured it: successive syntheses shared 43–59% of their
+content words, each superseding the last, each a full-length generation. I added a gate refusing a
+revision that cites no new evidence. It moved to re-recording relationships between its research
+threads. I made an unchanged relationship a no-op. It reworded them just enough to pass the check.
+
+Three loops, one cause. And the loop stayed awake because each of those events reset the idle
+backoff — including the `direction.paused` the orchestrator writes and the `direction.resumed` the
+supervisor writes a moment later. The scheduler was persuading itself that research had happened by
+writing about its own scheduling.
+
+Roughly half of one direction's budget went to pausing and resuming. The fix was not a better
+duplicate check; it was to stop resuming on a clock. A pause now stands until evidence arrives that
+could change it — a source admitted, a task returned, an outcome recorded. Measured afterwards, an
+hour of quiet fell from about **$2.00 to $0.17**, and recorded findings went up rather than down.
+
+The general lesson: if your agent has an outlet for looking busy, it will find it, and closing that
+outlet moves the behaviour rather than ending it. Ask instead why it was given the turn.
 
 ## Four things that broke, and what they taught me
 
@@ -170,5 +234,12 @@ claim that would not survive checking.
 
 ---
 
+One more thing worth saying plainly, because it is the sort of detail that usually gets left out:
+22 of the 125 runs in the first direction failed, almost all to provider rate limiting or a
+transport error rather than to anything scientific. Two tasks burned their entire attempt budget
+without an experiment ever running, and were recorded as unfinished as though the research had
+failed. Counting a rate limit against a task's attempts is a defect I know about and have not fixed.
+
 CURI is open source under the MIT license. It runs locally with your own API key in a `.env` —
-Gemini API, Vertex AI or OpenRouter — and the Google Cloud pieces are optional.
+Gemini API, Vertex AI, OpenRouter, or any OpenAI-compatible server including a local vLLM — and the
+Google Cloud pieces are optional. A full account of both runs is in `docs/run-report.md`.
