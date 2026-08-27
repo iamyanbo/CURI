@@ -368,14 +368,18 @@ test("a relationship recorded twice updates the edge instead of adding one", () 
       constraintsMarkdown: "", domainPath: root });
     const a = store.createComponent("direction", "# A\n\nThread A.");
     const b = store.createComponent("direction", "# B\n\nThread B.");
-    const first = store.relateComponents("direction", `${a} constrains ${b}: early account.`);
-    const second = store.relateComponents("direction", `${a} constrains ${b}: revised account.`);
+    const first = store.relateComponents("direction",
+      `${a} constrains ${b}: eviction limits what the scheduler can promise under memory pressure.`);
+    // A materially different account of the same pair updates the edge in place
+    // rather than adding a second one. A mere rewording is refused elsewhere.
+    const second = store.relateComponents("direction",
+      `${a} constrains ${b}: retained keys give the dispatcher a cheap regime signal, bounding its choices.`);
     assert.equal(first, second, "the pair keeps one identity");
     const rows = store.db.prepare("SELECT relationship_md FROM component_relations").all() as
       Array<{ relationship_md: string }>;
     assert.equal(rows.length, 1);
     // The latest account wins: understanding of a relationship is meant to evolve.
-    assert.match(rows[0]!.relationship_md, /revised account/);
+    assert.match(rows[0]!.relationship_md, /cheap regime signal/);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
@@ -453,6 +457,9 @@ test("a pause and its own resume do not reset the idle backoff", () => {
     "orchestrator.succeeded", "synthesis.refused", "task.delegation_refused", "watcher.started"]) {
     assert.ok(!list.includes(bookkeeping), `${bookkeeping} must not reset the backoff`);
   }
+  // component.related is bookkeeping over evidence already held, not evidence
+  // arriving, so it must not wake the loop either.
+  assert.ok(!list.includes("component.related"), "component.related must not reset the backoff");
   for (const progress of ["task.returned", "outcome.supported", "synthesis.recorded",
     "component.created", "source.relevant"]) {
     assert.ok(list.includes(progress), `${progress} should reset the backoff`);

@@ -360,7 +360,10 @@ ${item.description_md ?? ""}`) >= 0.75) return null;
     // the event counts as progress it reset the idle backoff — so an
     // orchestrator with nothing new to say could restate the same relationships
     // every minute indefinitely, each time at the price of a full turn.
-    if (existing && briefSimilarity(markdown, String(existing.relationship_md ?? "")) >= 0.8) return null;
+    // The threshold matches the one for syntheses rather than the one for task
+    // briefs: re-describing a relationship keeps the claim and changes the
+    // wording, so a near-copy check tuned for duplicated studies never fires.
+    if (existing && briefSimilarity(markdown, String(existing.relationship_md ?? "")) >= 0.5) return null;
     const id = existing?.relation_id ?? researchId("REL");
     this.db.prepare(
       `INSERT INTO component_relations(relation_id,direction_id,from_component_id,to_component_id,relationship_md,created_at)

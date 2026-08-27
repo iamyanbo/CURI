@@ -26,11 +26,17 @@ import { watcherSweep as sweep } from "./watcher.js";
  *
  * An allowlist rather than a denylist: a new event type should have to earn the
  * right to wake the loop, not inherit it.
+ *
+ * `component.related` is deliberately absent. A relationship is an
+ * interpretation of evidence already recorded, not evidence arriving, and an
+ * orchestrator with nothing else to do will re-describe the same map every turn
+ * — which is exactly what one direction did, five relationships at a time, once
+ * the pause could no longer reset the wait by itself.
  */
 const PROGRESS_EVENTS = [
   "source.relevant", "task.delegated", "task.returned", "executor.succeeded",
   "outcome.supported", "outcome.refuted", "outcome.bounded", "outcome.inconclusive", "outcome.blocked",
-  "synthesis.recorded", "component.created", "component.related",
+  "synthesis.recorded", "component.created",
 ] as const;
 
 export function researchStateDir(projectRoot: string): string { return stateDir(projectRoot); }
