@@ -260,6 +260,20 @@ export async function runResearchSupervisor(input: { projectRoot: string; direct
   // mirror shows the direction as it is now instead of as it was whenever
   // someone last ran `research publish`. No-op unless a project is configured.
   const stopMirrorSync = startMirrorSync({ projectRoot: input.projectRoot, directionId: input.directionId });
+  // A rejection raised inside a library, after the call that produced it was
+  // already caught, ends the process by default. That killed a supervisor over a
+  // missing publishing credential: an optional subsystem took the research with
+  // it. An unattended run is worth more than a clean crash, so the rejection is
+  // recorded where the operator will find it and the loop continues. The
+  // runtime's own failures are classified explicitly and do not arrive here.
+  const logStrayRejection = (reason: unknown) => {
+    try {
+      appendFileSync(join(researchStateDir(input.projectRoot), `research-supervisor-${input.directionId}.log`),
+        `${researchNow()} unhandled rejection (research continues): ${String(reason)}
+`, "utf8");
+    } catch { /* logging is best effort */ }
+  };
+  process.on("unhandledRejection", logStrayRejection);
   try {
     const recoveryStore = openResearchStore(input.projectRoot);
     try { reconcileSupervisorState(recoveryStore, input.directionId); } finally { recoveryStore.close(); }
@@ -305,6 +319,7 @@ export async function runResearchSupervisor(input: { projectRoot: string; direct
   } finally {
     // One last publish, so the record the mirror serves is the state the run
     // actually ended in rather than the state at the previous tick.
+    process.off("unhandledRejection", logStrayRejection);
     await stopMirrorSync();
     try { unlinkSync(pidPath); } catch { /* best effort */ }
   }

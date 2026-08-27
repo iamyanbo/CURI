@@ -24,6 +24,8 @@ import { publishToFirestore } from "./mirror.js";
 import { ResearchStore, researchNow } from "./store.js";
 
 const DEFAULT_INTERVAL_SECONDS = 120;
+/** Consecutive failures after which publishing gives up rather than retrying forever. */
+const MAX_CONSECUTIVE_FAILURES = 5;
 
 /** The project the record is published to, or null when publishing is not configured. */
 export function mirrorProjectId(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -53,7 +55,14 @@ export async function syncMirrorOnce(input: {
   projectRoot: string; directionId: string; databaseId?: string;
   since: number; projectId: string; log: (line: string) => void;
 }): Promise<number> {
-  const store = ResearchStore.open(statePath(input.projectRoot, "research.sqlite"));
+  // Opening the store was outside the guard, so a failure here escaped as an
+  // unhandled rejection instead of being reported as a failed sync.
+  let store;
+  try { store = ResearchStore.open(statePath(input.projectRoot, "research.sqlite")); }
+  catch (error) {
+    input.log(`mirror sync could not open the store: ${String(error)}`);
+    return input.since;
+  }
   let record;
   let seq = input.since;
   try {
@@ -98,13 +107,31 @@ export function startMirrorSync(input: {
 
   let since = -1;
   let running = false;
+  let failures = 0;
+  let stopped = false;
   const tick = async () => {
     // Firestore round trips can outlast the interval; overlapping publishes
     // would race on the same documents, so a tick that arrives while one is in
     // flight is dropped rather than queued.
-    if (running) return;
+    if (running || stopped) return;
     running = true;
-    try { since = await syncMirrorOnce({ ...input, since, projectId, log }); } finally { running = false; }
+    try {
+      const advanced = await syncMirrorOnce({ ...input, since, projectId, log });
+      failures = advanced > since ? 0 : failures;
+      since = advanced;
+    } catch (error) {
+      // Publishing is optional telemetry. Whatever it does, it must not be able
+      // to end a research run — a missing credential once killed a supervisor
+      // through an unhandled rejection raised after the failure was caught.
+      failures += 1;
+      log(`mirror sync error (${failures}): ${String(error)}`);
+      if (failures >= MAX_CONSECUTIVE_FAILURES) {
+        stopped = true;
+        clearInterval(timer);
+        log("mirror sync disabled after repeated failures; research continues unpublished. "
+          + "Check credentials (ADC or a service account) and restart to re-enable it.");
+      }
+    } finally { running = false; }
   };
 
   log(`mirror sync enabled for project ${projectId} every ${mirrorSyncIntervalMs() / 1_000}s`);

@@ -33,3 +33,20 @@ test("a failed publish does not advance the published watermark", () => {
   const catchBlock = source.slice(source.indexOf("mirror sync failed, will retry"));
   assert.match(catchBlock.slice(0, 200), /return input\.since;/);
 });
+
+test("publishing cannot end a research run", () => {
+  // A missing credential killed a supervisor: the failure was caught and logged,
+  // then a rejection raised inside the Firestore client after that point ended
+  // the process. Publishing is optional telemetry; research outranks it.
+  const sync = readFileSync(join(process.cwd(), "src", "research", "mirror-sync.ts"), "utf8");
+  const tick = sync.slice(sync.indexOf("const tick = async () =>"), sync.indexOf("log(`mirror sync enabled"));
+  assert.match(tick, /catch \(error\)/);
+  assert.match(tick, /mirror sync disabled after repeated failures/);
+  // Opening the store was outside the guard, so it escaped as a rejection too.
+  const once = sync.slice(sync.indexOf("export async function syncMirrorOnce"), sync.indexOf("export function startMirrorSync"));
+  assert.match(once, /could not open the store/);
+
+  const runtime = readFileSync(join(process.cwd(), "src", "research", "runtime.ts"), "utf8");
+  assert.match(runtime, /process\.on\("unhandledRejection"/);
+  assert.match(runtime, /research continues/);
+});
