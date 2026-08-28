@@ -1,6 +1,9 @@
 # Local CURI with DeepSeek on DGX Spark
 
-This branch preserves a deployment mode that is separate from the original cloud-backed hackathon submission.
+This describes a deployment mode with no cloud dependency at all: the model is served on a second
+machine on your own network, and nothing leaves it except the literature searches the watcher makes.
+It is an alternative to the cloud-backed configuration in the README, not a replacement for it —
+both run from the same code, selected by `.env`.
 
 ## Boundary
 
