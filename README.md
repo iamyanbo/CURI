@@ -528,92 +528,54 @@ number meaningless.
 
 ### How to interpret these results
 
-These should not be presented as novel discoveries. Three of the four reproduce results that
-already exist in the literature: the causal blindness of attention-mass eviction is the failure
-mode StreamingLLM and later needle-retrieval work describe for H2O-style policies; the speculative
-decoding result is the standard acceptance-rate/latency crossover inequality, reached through
-measurement rather than algebra; and the K/V asymmetry is the finding KIVI reports and uses to
-motivate per-channel key quantization. The dispatcher that composes them is an integration, not a
-new mechanism.
+These results should not be presented as novel discoveries. The highlighted attention results
+largely reproduce known behavior: attention-mass eviction's causal blindness appears in
+StreamingLLM and later needle-retrieval work; the speculative-decoding result follows the standard
+acceptance-rate/latency tradeoff; and the K/V asymmetry is reported by KIVI. The regime dispatcher
+and the other integrations are engineering results, not new mechanisms.
 
-That is the honest result of a system running on a consumer GPU over a few days. The value of the
-run is not novelty; it is the transparent, independently checked process by which the findings were
-reached and the fact that the record preserves what the experiments cost:
+The strategy-generalization direction is an early domain demonstration, not a trading system. Its
+purpose is to test whether a strategy that looks good in-sample survives outside the period in which
+it was found. Its results remain provisional and should not be treated as investment evidence.
 
-- They were **independently re-derived**, not retrieved. The eviction result came out of a design
-  that included a random-eviction control, which is why "0% at 50% budget" is a claim about the
-  policy rather than about the task being hard. Re-verification on hardware you control is
-  legitimate scientific output, and it is the part of published work that is most often absent.
-- The eviction study **refuted its own leading hypothesis** and was recorded as `bounded` rather
-  than rewritten into a success. A hill-climbing loop has no way to produce that outcome.
-- The speculative-decoding finding is a **negative result** — the technique lost wall-clock time at
-  a healthy acceptance rate — and it survived into the record instead of being discarded as a
-  failed run.
-
-The contribution this repository claims is the **research process**, not the findings: a
-delegation gate that refuses untethered and near-duplicate briefs, syntheses that accumulate and
-can be superseded rather than overwritten, per-call cost accounting, and an agent that is allowed
+The contribution this repository claims is the **research process**, not the findings: a delegation
+gate that refuses untethered and near-duplicate briefs, syntheses that accumulate and can be
+superseded, independently checked outcomes, per-call cost accounting, and an agent that is allowed
 to stop when it has nothing worth asking. Whether this process can produce a finding that is *not*
 already in the literature remains an open question about scale.
 
-### Lessons from building the runtime
+### What the runs taught us
 
-- **Model latency, not GPU throughput, was the bottleneck.** The run measured 3442 seconds of tool
-  time against 5695 seconds waiting on the model, with the GPU at 33% utilisation. More compute buys
-  *scope*, not speed.
-- **Cost accounting has to cover the whole interaction.** Recording only the final model call
-  undercounted input tokens **20×** and output **90×**, because a tool loop resends the conversation
-  each turn and reasoning tokens arrive in a separate field.
-- **Long tool loops need explicit context epochs.** CURI uses Genkit's `returnToolRequests`,
-  serializable `response.messages`, and registered tool actions to checkpoint a long run without
-  replacing Genkit or forcing scientific state through a JSON grammar.
-- **Interruption is part of normal operation.** Provider errors, operator stops and preemption all
-  happen. An interrupted attempt should be resumed rather than discarded, without charging it
-  against the attempt budget.
-- **A refusal has to explain itself.** Feedback is useful only if the orchestrator sees it; refused
-  delegations are therefore surfaced in its next context rather than discarded.
-- **Evidence needs calibrated language.** Left unconstrained, the orchestrator wrote "proved" and
-  "established" from n=3 on a 0.5B model. Outcomes must state the envelope their evidence covers,
-  and `supported` is reserved for claims whose falsifier was actually tested.
-- **An agent given a turn will use it.** Resuming a paused direction on a timer hands the
-  orchestrator the same context and the same question, and it records *something* rather than
-  nothing — a restated synthesis, a re-described component map. Three separate repetition loops
-  came from that one cause, and closing each moved the behaviour to the next. Roughly half of one
-  direction's budget went to pausing and resuming. A pause now stands until evidence arrives, and
-  an hour of quiet fell from about **$2.00 to $0.17**.
-- **Do not let the loop's own bookkeeping look like progress.** The idle backoff reset on any new
-  event, including the `direction.paused` the orchestrator writes and the `direction.resumed` the
-  supervisor writes a moment later. A scheduler must not be able to persuade itself that research
-  happened.
-- **Optional subsystems must not be able to stop the research.** A missing publishing credential
-  killed a supervisor: the failure was caught and logged, then a rejection raised inside the
-  Firestore client after that point ended the process.
-- **A provider failure is not a research failure.** Twenty-two of 125 runs failed, almost all to
-  rate limiting or a transport error. Two tasks exhausted their attempt budget without an
-  experiment ever running, and were returned as though the science had failed. Counting a rate
-  limit against a task's attempts is a known defect and is not yet fixed.
+- **Model latency, not GPU throughput, was the bottleneck.** The runs spent far more time waiting
+  on the model than using the GPU. More compute buys *scope*, not necessarily speed.
+- **Cost accounting has to cover the whole interaction.** A tool loop resends the conversation and
+  reasoning tokens arrive separately, so recording only the final model call substantially
+  undercounts usage.
+- **Long-running agent work needs checkpoints and resumability.** Tool requests, model responses and
+  scientific state have to survive interruption without turning transport failures into new
+  experiments.
+- **Runtime state must distinguish progress from activity.** A pause or idle turn should not trigger
+  a paid repetition of the same question; new evidence should be what wakes the system.
+- **Evidence needs calibrated language.** Outcomes state the envelope their evidence covers, and
+  `supported` is reserved for claims whose falsifier was actually tested.
 
-### Limits of the current evidence
+The detailed implementation postmortem is in [`docs/build-story.md`](docs/build-story.md).
 
-- Findings are bounded to 0.5B–1.5B models at ≤4096 context on one consumer GPU. That is
-  *simulated* memory pressure, not the long-context regime the direction ultimately targets.
-- Sample sizes are small (n=3 per cell in the eviction study); the results indicate rather than
-  establish.
-- The eviction study measures the symptom, not the mechanism: it does not record whether the needle
-  token survived eviction, so "evicted it" and "kept it but could not use it" remain
-  undistinguished.
-- The runtime is intended to support other domains, but this end-to-end campaign tested only the
-  attention example. Other domains require their own evaluator, replication policy and domain review.
-- The research loop runs on the machine that holds the data and hardware it measures; only the
-  record and its mirror are hosted. The finance direction is a counterexample to the stronger claim
-  that a GPU is required — it needs neither a GPU nor much memory.
-- The finance direction's own results are not yet consistent: its search-intensity table and its
-  CPCV summary disagree on out-of-sample Sharpe, and its reported probability of backtest
-  overfitting is implausibly low. That contradiction is unresolved and those numbers should not be
-  quoted.
-- Its withheld decade has never been evaluated, and the withholding is procedural rather than
-  enforced: the tool layer refuses protected paths, but a Python script the executor writes runs
-  with the operator's permissions. Genuine isolation needs a separate user or a container.
+### What these runs do—and do not—show
+
+- The attention findings are bounded to 0.5B–1.5B models at ≤4096 context on one RTX 3060 Ti. This
+  is simulated memory pressure, not the long-context regime the direction ultimately targets.
+- Sample sizes are small; the results indicate rather than establish.
+- The eviction study measures the symptom, not the mechanism: it does not distinguish a needle token
+  being evicted from being retained but unusable.
+- The runtime has now been exercised in two domains, but each new domain still requires its own
+  evaluator, replication policy and domain review.
+- Experiments run on the machine that holds the data and hardware they measure; only the record and
+  its mirror are hosted. The strategy direction also shows that a GPU is not universally required.
+- The strategy results contain an unresolved internal inconsistency, and the withheld decade has not
+  been evaluated. Those numbers should not be quoted as validated trading results.
+- Process isolation reduces the executor's capabilities but is not a hardened hostile-code sandbox;
+  genuine isolation requires a separate user or container.
 
 ---
 
