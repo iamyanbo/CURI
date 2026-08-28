@@ -97,6 +97,13 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .katex{font-size:1.02em}
 .katex-display{margin:var(--s3) 0;overflow-x:auto;overflow-y:hidden;padding:2px 0}
 .clip{max-height:340px;overflow:auto}
+/* Clamped rather than scrollable: a scrollbox inside a scrolling page is worse
+   than a fold, and the fade says there is more without a second scrollbar. */
+.prose.clamped{max-height:210px;overflow:hidden;position:relative}
+.prose.clamped::after{content:'';position:absolute;left:0;right:0;bottom:0;height:64px;
+  background:linear-gradient(180deg,transparent,var(--surface-2))}
+.chip.readall{margin-top:10px;cursor:pointer}
+.chip.readall:hover{border-color:var(--accent);color:var(--text-1)}
 .clip-sm{max-height:200px;overflow:auto}
 
 .idchip{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--line-2);
@@ -593,7 +600,8 @@ function understanding(){
     return `<article class="finding">
       <div class="head"><h3>${esc(title)}</h3><span class="status ${esc(status)}">${esc(String(status).replace('_',' '))}</span></div>
       <div class="body">
-        <div class="prose" data-md="${esc(s.synthesis_id)}"></div>
+        <div class="prose ${expanded.has('syn:'+s.synthesis_id)?'':'clamped'}" data-md="${esc(s.synthesis_id)}"></div>
+        <button class="chip readall" data-expand-syn="${esc(s.synthesis_id)}">${expanded.has('syn:'+s.synthesis_id)?'collapse':'read all'}</button>
         <div class="provenance"><span class="t-micro">spans</span>${
           spans.map(x=>`<span class="idchip comp">${esc(x)}</span>`).join('')||'<span class="t-meta">direction level</span>'}</div>
         <div class="provenance"><span class="t-micro">evidence</span>
@@ -621,6 +629,12 @@ function understanding(){
         <span class="t-small" style="color:var(--text-3)">Tentative: a revision stands until better evidence supersedes it.</span></div>
     </article>`}).join('');
   syn.forEach(s=>prose(host.querySelector('[data-md="'+s.synthesis_id+'"]'),stripLeadingHeading(s.body_md)));
+  // A synthesis runs to eight thousand characters on average. Shown in full,
+  // twenty-eight of them are a wall no reader scans; clamped, the view becomes a
+  // list of claims that opens on demand.
+  host.querySelectorAll('[data-expand-syn]').forEach(el=>el.onclick=e=>{e.stopPropagation();
+    const key='syn:'+el.dataset.expandSyn;
+    expanded.has(key)?expanded.delete(key):expanded.add(key);understanding()});
   host.querySelectorAll('[data-outcome]').forEach(el=>el.onclick=e=>{e.stopPropagation();
     const o=arr(S.outcomes).find(x=>x.outcome_id===el.dataset.outcome);
     if(!o)return; task=o.task_id; filePreview=null; view='task'; invalidate('detail'); paint()});

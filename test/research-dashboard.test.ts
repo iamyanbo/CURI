@@ -211,3 +211,15 @@ test("the piano roll draws tiles a reader can hit", () => {
   // And idle stretches are collapsed with a visible break, not silently.
   assert.match(html, /class="gapmark"/);
 });
+
+test("long syntheses are folded, not dumped", () => {
+  // The median synthesis on a real record is 8,066 characters and the longest is
+  // 14,013. Twenty-eight of those rendered in full is a wall nobody scans.
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  assert.match(html, /\.prose\.clamped\{max-height/);
+  assert.match(html, /data-expand-syn=/);
+  // Folded by default, and the fold is reversible per synthesis.
+  const view = html.slice(html.indexOf("function understanding()"), html.indexOf("function components()"));
+  assert.match(view, /expanded\.has\('syn:'\+s\.synthesis_id\)\?''\:'clamped'/);
+  assert.match(view, /expanded\.has\(key\)\?expanded\.delete\(key\)\:expanded\.add\(key\)/);
+});
