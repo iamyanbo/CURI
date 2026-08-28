@@ -108,6 +108,9 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 
 .idchip{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--line-2);
   border-radius:5px;padding:0 6px;font-size:12.5px;color:var(--text-2);white-space:nowrap;cursor:help;text-decoration:none}
+/* A chip that is a link should look like one. */
+a.idchip{cursor:pointer}
+a.idchip:hover{border-color:var(--violet);color:var(--text-1);text-decoration:underline}
 .idchip::before{content:"";width:5px;height:5px;border-radius:1px;background:var(--text-3)}
 .idchip.comp::before{background:var(--accent)}
 .idchip.src::before{background:var(--violet)}
@@ -791,6 +794,13 @@ async function openFile(taskId,path){
     invalidate('detail');paint()}
   catch(e){filePreview={path,bytes:0,text:String(e),truncated:false};invalidate('detail');paint()}
 }
+// The local API sends command arguments as JSON text; the published record
+// sends them already parsed and redacted. Parsing the wrong one threw inside
+// the template and left the whole task card blank on the mirror.
+function cmdArgs(c){
+  if(Array.isArray(c.args))return c.args;
+  try{return JSON.parse(c.args_json||'[]')}catch(e){return []}
+}
 function detailPanel(){
   const t=task?arr(S.tasks).find(x=>x.task_id===task):null;
   if(!t){$('#detail').innerHTML='<div class="empty">No task selected.</div>';return}
@@ -815,7 +825,7 @@ function detailPanel(){
     +`<h3 style="margin-top:24px">Verified checks</h3>`
     +(cmds.length?cmds.map(c=>`<div class="t-meta" style="margin-bottom:8px">
         <span class="tag ${c.kind==='verification'?'tool_result':'tool_call'}">${esc(c.kind)}</span>
-        ${esc(c.executable)} ${esc(JSON.parse(c.args_json).join(' '))} → exit ${esc(c.exit_code)}</div>`).join('')
+        ${esc(c.executable)} ${esc(cmdArgs(c).join(' '))} → exit ${esc(c.exit_code)}</div>`).join('')
       :'<div class="empty">No decisive checks recorded yet.</div>')
     +`<h3 style="margin-top:24px">Artifacts</h3>`
     +(arts.length?arts.map(a=>`<div class="t-meta">${esc(a.kind)} · ${esc(a.path)}</div>`).join(''):'<div class="empty">No artifacts.</div>')
@@ -874,9 +884,15 @@ function lanes(){return arr(S.execution?.lanes)
 function rollWindowFit(ls){const now=Date.now();
   const from=Math.min(...ls.map(l=>l.startMs)),to=Math.max(now,...ls.map(l=>l.endMs));
   const pad=Math.max(1000,(to-from)*0.02);return{from:from-pad,to:to+pad}}
-function rollWindow(ls){const now=Date.now();
-  if(zoom!=='fit')return{from:now-zoom*60000,to:now+Math.max(2000,zoom*60000*0.02)};
-  return rollWindowFit(ls)}
+function rollWindow(ls){
+  if(zoom==='fit')return rollWindowFit(ls);
+  // Anchored on the newest run rather than the wall clock. A finished or
+  // published record ends in the past, so a window measured back from now
+  // selected nothing, silently fell through to fit, and every zoom button
+  // looked dead.
+  const newest=ls.length?Math.max(...ls.map(l=>l.endMs)):Date.now();
+  const anchor=Math.min(Date.now(),newest+zoom*60000*0.02);
+  return{from:anchor-zoom*60000,to:anchor+Math.max(2000,zoom*60000*0.02)}}
 /**
  * A piecewise time axis for the roll.
  *

@@ -223,3 +223,22 @@ test("long syntheses are folded, not dumped", () => {
   assert.match(view, /expanded\.has\('syn:'\+s\.synthesis_id\)\?''\:'clamped'/);
   assert.match(view, /expanded\.has\(key\)\?expanded\.delete\(key\)\:expanded\.add\(key\)/);
 });
+
+test("the window buttons work on a record that has finished", () => {
+  // Anchored on the wall clock, every window on a record that ended hours ago
+  // selected nothing, fell through to fit, and looked dead.
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  const fn = html.slice(html.indexOf("function rollWindow(ls)"), html.indexOf("function buildTimeMap"));
+  assert.match(fn, /Math\.max\(\.\.\.ls\.map\(l=>l\.endMs\)\)/);
+  assert.doesNotMatch(fn.split("if(zoom==='fit')")[1] ?? "", /from:now-zoom/);
+});
+
+test("a task card renders from a published record", () => {
+  // The local API sends command arguments as JSON text and the published record
+  // sends them parsed; parsing the wrong one threw inside the template and left
+  // the whole card blank on the mirror.
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  assert.match(html, /function cmdArgs\(c\)/);
+  assert.match(html, /Array\.isArray\(c\.args\)/);
+  assert.doesNotMatch(html, /JSON\.parse\(c\.args_json\)\.join/);
+});
