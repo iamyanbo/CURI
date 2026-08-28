@@ -40,25 +40,59 @@ that make those findings possible.
 ## Architecture
 
 ```mermaid
+flowchart LR
+    LIT["Literature<br/>arXiv · GitHub · HN"] --> WATCH["Watcher<br/><i>reads and filters</i>"]
+    WATCH -->|admitted sources| ORCH
+    ORCH["Orchestrator<br/><i>asks the question,<br/>interprets every result</i>"] --> GATE{{"Gate<br/><i>anchored?<br/>not a repeat?</i>"}}
+    GATE -.->|refused, with the reason| ORCH
+    GATE -->|admitted brief| EXEC["Executor<br/><i>implements and runs it<br/>in its own git worktree</i>"]
+    EXEC -->|report + checks| VERIFY["Runtime re-runs<br/>every decisive check"]
+    VERIFY --> ORCH
+    ORCH -->|outcome · synthesis| REC[("Research record")]
+    REC --> MIRROR["Public mirror<br/><i>Cloud Run · Firestore</i>"]
+    ORCH -.->|nothing worth doing| PAUSE(["Pause — costs nothing<br/>until evidence arrives"])
+    PAUSE -.-> WATCH
+
+    classDef agent fill:#1a2a24,stroke:#2b6f66,color:#e7edf4
+    classDef cloud fill:#1a2f4a,stroke:#4a7dbd,color:#e7edf4
+    class WATCH,ORCH,EXEC agent
+    class MIRROR cloud
+```
+
+Three agents and one rule: **the orchestrator interprets every result before anything else is
+delegated.** That is what makes the loop research rather than search — there is no path from a
+result back to another experiment that does not pass through an interpretation.
+
+**The loop:** the watcher admits prior work → the orchestrator picks one unresolved question and
+writes a brief → a gate refuses briefs that cite no evidence or repeat an earlier study → the
+executor implements it in an isolated git worktree → the runtime **independently re-runs** every
+decisive check → the orchestrator interprets the result into an outcome, and material findings
+into a synthesis that later evidence can supersede.
+
+<details>
+<summary>The same thing with the runtime's supporting parts</summary>
+
+```mermaid
 flowchart TB
-    subgraph Local["Operator machine — local GPU"]
+    subgraph Local["Operator machine"]
         direction TB
         SUP["Supervisor loop<br/><i>one experiment at a time</i>"]
-        ORCH["Orchestrator<br/><i>asks the question, delegates, interprets</i>"]
-        EXEC["Executor<br/><i>implements, runs, reports</i>"]
-        WATCH["Watcher<br/><i>finds and filters prior work</i>"]
-        GATE{{"Delegation gate<br/><i>anchored? not a near-duplicate?</i>"}}
-        PRE["Environment preflight<br/><i>interpreters · GPU · sandbox rules</i>"]
+        ORCH["Orchestrator"]
+        EXEC["Executor"]
+        WATCH["Watcher"]
+        GATE{{"Delegation gate"}}
+        PRE["Environment preflight<br/><i>interpreters · devices · sandbox rules</i>"]
         WT[("Git worktree<br/>per task")]
         DB[("SQLite<br/>research record")]
-        DASH["Operator dashboard<br/><i>piano roll · live trace</i>"]
+        DASH["Dashboard<br/><i>piano roll · trace</i>"]
     end
 
-    subgraph Google["Google Cloud"]
-        VERTEX["Vertex AI<br/><b>gemini-3.7-flash</b>"]
-        FS[("Firestore<br/><i>published record</i>")]
-        RUN["Cloud Run<br/><b>read-only mirror</b>"]
+    subgraph Cloud["Optional — Google Cloud"]
+        FS[("Firestore")]
+        RUN["Cloud Run mirror"]
     end
+
+    MODEL["Model provider<br/><i>Gemini · Vertex · OpenRouter<br/>· any OpenAI-compatible server</i>"]
 
     ARXIV["arXiv · GitHub · Hacker News"] --> WATCH
     WATCH -->|source cards| DB
@@ -74,25 +108,24 @@ flowchart TB
     SUP -->|outcome| ORCH
     ORCH -->|synthesis| DB
     DB --> DASH
-    DB --> DASH
-
-    ORCH -.->|Genkit| VERTEX
-    EXEC -.->|Genkit| VERTEX
-    WATCH -.->|Genkit| VERTEX
-    DB -->|research publish<br/><i>redacted</i>| FS
+    ORCH -.->|Genkit| MODEL
+    EXEC -.->|Genkit| MODEL
+    WATCH -.->|Genkit| MODEL
+    DB -->|published, redacted| FS
     FS --> RUN
 
     classDef cloud fill:#1a2f4a,stroke:#4a7dbd,color:#e7edf4
     classDef local fill:#1a2a24,stroke:#2b6f66,color:#e7edf4
-    class VERTEX,FS,RUN cloud
+    class FS,RUN cloud
     class SUP,ORCH,EXEC,WATCH,DASH local
 ```
 
-**The loop:** the watcher admits prior work → the orchestrator picks one unresolved question and
-writes a brief → a gate refuses briefs that cite no evidence or repeat an earlier study → the
-executor implements it in an isolated git worktree → the runtime **independently re-runs** every
-decisive check → the orchestrator interprets the result into an outcome, and material findings
-into a synthesis that later evidence can supersede.
+The supervisor is the outer loop: it schedules the roles, enforces the spend ceiling and stops, and
+independently re-runs each decisive check before the orchestrator sees the result. The preflight
+measures the machine by running it, so experiment scale is fixed against real devices rather than a
+guess. Everything in the cloud box is optional; the runtime is complete without it.
+
+</details>
 
 ---
 
