@@ -76,6 +76,11 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 
 .prose{font-size:15px;line-height:1.7;color:var(--text);max-width:78ch}
 .component-writeup{width:100%;max-width:none;font-family:var(--sans);white-space:normal}
+/* The task card is one full-width column of file lists, checks and buttons, so
+   a 78ch reading measure left its prose sitting in half the card while
+   everything around it spanned the whole of it. */
+#detail .prose{max-width:none}
+#detail .prose p,#detail .prose li{max-width:110ch}
 .actions{display:flex;gap:var(--s3);flex-wrap:wrap;align-items:center;margin-top:var(--s4)}
 .prose>*:first-child{margin-top:0}.prose>*:last-child{margin-bottom:0}
 .prose h1{font-size:18px;margin:var(--s5) 0 var(--s2);font-weight:640}
@@ -111,6 +116,11 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 /* A chip that is a link should look like one. */
 a.idchip{cursor:pointer}
 a.idchip:hover{border-color:var(--violet);color:var(--text-1);text-decoration:underline}
+.idchip.go{cursor:pointer}
+.idchip.go:hover{border-color:var(--accent);color:var(--text-1)}
+.idchip.task::before{background:var(--text-3)}
+/* An identifier the record does not hold should not look like a working link. */
+.idchip.unknown{opacity:.55;border-style:dashed}
 .idchip::before{content:"";width:5px;height:5px;border-radius:1px;background:var(--text-3)}
 .idchip.comp::before{background:var(--accent)}
 .idchip.src::before{background:var(--violet)}
@@ -391,20 +401,43 @@ function renderMarkdown(src){
 }
 function idNames(){
   const names=new Map();
-  arr(S.components).forEach(c=>names.set(c.component_id,{label:c.title,cls:'comp'}));
-  arr(S.sources).forEach(x=>names.set(x.source_id,{label:x.title,cls:'src'}));
+  arr(S.components).forEach(c=>names.set(c.component_id,{label:c.title,cls:'comp',open:{component:c.component_id}}));
+  arr(S.sources).forEach(x=>names.set(x.source_id,{label:x.title,cls:'src',open:{url:x.canonical_url}}));
   arr(S.outcomes).forEach(o=>{
     const t=arr(S.tasks).find(x=>x.task_id===o.task_id);
     const title=t?String(t.brief_md).split(/\r?\n/)[0].replace(/^#+\s*/,'').replace(/^Task:\s*/i,''):'';
-    names.set(o.outcome_id,{label:title||o.verdict+' finding',cls:'out'});
+    names.set(o.outcome_id,{label:title||o.verdict+' finding',cls:'out',open:{task:o.task_id}});
   });
   arr(S.syntheses).forEach(x=>names.set(x.synthesis_id,{label:'synthesis',cls:'syn'}));
+  // Tasks were absent from this map, so every TASK- citation in a synthesis
+  // rendered as a bare identifier even though the task was right there.
+  arr(S.tasks).forEach(t=>names.set(t.task_id,{
+    label:String(t.brief_md).split(/\r?\n/)[0].replace(/^#+\s*/,'').replace(/^Task:\s*/i,'')||'task',
+    cls:'task', open:{task:t.task_id}}));
   return names;
 }
 function absorbParenthetical(chip,node){
   if(!node||node.nodeType!==3)return;
   const paren=node.nodeValue.match(/^\s*\(([^()]{2,60})\)/);
   if(paren){chip.textContent=paren[1].slice(0,44);node.nodeValue=node.nodeValue.slice(paren[0].length)}
+}
+// An inline citation should go where it points. These chips carried a tooltip
+// and nothing else, so a synthesis full of provenance was a dead end, and an
+// identifier the record does not hold looked identical to one it does.
+function wireChip(chip,id,hit){
+  chip.title=hit?id:id+' — not in this record';
+  if(!hit){chip.classList.add('unknown');return}
+  const go=hit.open||{};
+  if(go.url){
+    const a=document.createElement('a');
+    a.className=chip.className;a.title=chip.title;a.textContent=chip.textContent;
+    a.href=go.url;a.target='_blank';a.rel='noreferrer';
+    chip.replaceWith(a);return;
+  }
+  if(go.task){chip.classList.add('go');chip.onclick=e=>{e.stopPropagation();
+    task=go.task;filePreview=null;view='task';invalidate('detail');paint()};return}
+  if(go.component){chip.classList.add('go');chip.onclick=e=>{e.stopPropagation();
+    component=go.component;view='components';invalidate('components');invalidate('understanding');paint()}}
 }
 function linkifyIds(root){
   if(!S||!root)return;
@@ -425,7 +458,7 @@ function linkifyIds(root){
       const chip=document.createElement('span');
       chip.className='idchip '+(hit?hit.cls:'');chip.title=id;
       chip.textContent=hit?String(hit.label).slice(0,44):id;
-      codeEl.replaceWith(chip);absorbParenthetical(chip,chip.nextSibling);
+      codeEl.replaceWith(chip);absorbParenthetical(chip,chip.nextSibling);wireChip(chip,id,hit);
       continue;
     }
     const value=node.nodeValue,frag=document.createDocumentFragment();
@@ -437,11 +470,12 @@ function linkifyIds(root){
       const chip=document.createElement('span');
       chip.className='idchip '+(hit?hit.cls:'');chip.title=m[0];
       chip.textContent=hit?String(hit.label).slice(0,44):m[0];
-      frag.append(chip);chips.push(chip);last=m.index+m[0].length;
+      frag.append(chip);chips.push([chip,m[0],hit]);last=m.index+m[0].length;
     }
     const tail=document.createTextNode(value.slice(last));
     frag.append(tail);node.replaceWith(frag);
-    if(chips.length)absorbParenthetical(chips[chips.length-1],tail);
+    if(chips.length)absorbParenthetical(chips[chips.length-1][0],tail);
+    for(const [chip,id,hit] of chips)wireChip(chip,id,hit);
   }
 }
 function stripLeadingHeading(md){

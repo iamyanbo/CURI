@@ -242,3 +242,22 @@ test("a task card renders from a published record", () => {
   assert.match(html, /Array\.isArray\(c\.args\)/);
   assert.doesNotMatch(html, /JSON\.parse\(c\.args_json\)\.join/);
 });
+
+test("inline citations in a synthesis go where they point", () => {
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  // Identifiers inside the prose were chips with a tooltip and no behaviour, so
+  // a synthesis full of provenance was a dead end.
+  assert.match(html, /function wireChip\(chip,id,hit\)/);
+  assert.match(html, /view='task';invalidate\('detail'\)/);
+  // Tasks were missing from the label map, so every TASK- citation showed a raw id.
+  const names = html.slice(html.indexOf("const names=new Map()"), html.indexOf("function absorbParenthetical"));
+  assert.match(names, /arr\(S\.tasks\)\.forEach/);
+  // An identifier the record does not hold must not look like a working link.
+  assert.match(html, /\.idchip\.unknown\{/);
+  assert.match(html, /not in this record/);
+});
+
+test("the task card uses its full width", () => {
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  assert.match(html, /#detail \.prose\{max-width:none\}/);
+});
