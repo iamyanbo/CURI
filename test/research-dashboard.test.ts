@@ -35,6 +35,13 @@ test("dashboard scopes execution by component and task", () => {
   assert.match(html, /Raw internal event/);
 });
 
+test("component writeups render as full-width prose without repeating the card title", () => {
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  assert.match(html, /\.component-writeup\{width:100%;max-width:none;/);
+  assert.match(html, /class="prose component-writeup" id="comp-desc"/);
+  assert.match(html, /prose\(\$\('#comp-desc'\),stripLeadingHeading\(c\.description_md\|\|''\)\)/);
+});
+
 test("dashboard derives tentative, accepted, and superseded knowledge without a score", () => {
   const root = mkdtempSync(join(tmpdir(), "lean-dashboard-state-"));
   let first = ""; let second = "";

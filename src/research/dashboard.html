@@ -75,6 +75,7 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .toolbar{display:flex;gap:var(--s2);flex-wrap:wrap;align-items:center;padding:var(--s3) var(--s4);border-bottom:1px solid var(--line)}
 
 .prose{font-size:15px;line-height:1.7;color:var(--text);max-width:78ch}
+.component-writeup{width:100%;max-width:none;font-family:var(--sans);white-space:normal}
 .actions{display:flex;gap:var(--s3);flex-wrap:wrap;align-items:center;margin-top:var(--s4)}
 .prose>*:first-child{margin-top:0}.prose>*:last-child{margin-bottom:0}
 .prose h1{font-size:18px;margin:var(--s5) 0 var(--s2);font-weight:640}
@@ -716,7 +717,7 @@ function componentDetail(){
   const runs=arr(S.execution?.lanes).filter(l=>arr(l.componentIds).includes(component)||l.componentId===component);
   $('#comp-detail-title').textContent=c.title;
   $('#comp-detail-note').textContent=`${syn.length} syntheses · ${ts.length} tasks · ${runs.length} runs`;
-  host.innerHTML=`<div class="prose" id="comp-desc"></div>
+  host.innerHTML=`<div class="prose component-writeup" id="comp-desc"></div>
     <div class="stats" style="margin-top:16px">
       <div class="stat"><b>${ts.length}</b><span>tasks</span></div>
       <div class="stat"><b>${syn.length}</b><span>syntheses</span></div>
@@ -726,7 +727,7 @@ function componentDetail(){
     <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn primary" data-goto="understanding">view understanding</button>
       <button class="btn" data-goto="execution">view its runs</button></div>`;
-  prose($('#comp-desc'),c.description_md||'');
+  prose($('#comp-desc'),stripLeadingHeading(c.description_md||''));
   host.querySelectorAll('[data-goto]').forEach(el=>el.onclick=()=>{view=el.dataset.goto;invalidate('roll');paint()});
 }
 
