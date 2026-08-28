@@ -189,13 +189,20 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .mix{display:flex;height:3px;border-radius:2px;overflow:hidden;margin-top:5px;background:var(--bg)}
 .mix i{display:block;height:100%}
 .track{position:relative;height:34px;background:var(--bg)}
-.seg{position:absolute;top:8px;height:12px;border-radius:3px;min-width:2px;overflow:hidden}
+/* A pixel floor, because a two-second segment on a multi-hour axis is a
+   fraction of a pixel and cannot be clicked at all. */
+.seg{position:absolute;top:6px;height:16px;border-radius:3px;min-width:7px;overflow:hidden;cursor:pointer}
+.seg:hover{outline:1px solid var(--accent);outline-offset:1px;z-index:3}
+/* A merged tile stands for several steps; the hatch says so at a glance. */
+.seg.many{background-image:repeating-linear-gradient(90deg,#ffffff22 0 2px,transparent 2px 5px)}
+.gapmark{position:absolute;top:0;bottom:0;width:2px;background:repeating-linear-gradient(180deg,var(--line-2) 0 4px,transparent 4px 8px);z-index:2}
+.tick.brk{color:var(--text-3);letter-spacing:1px}
 .seg-label{display:block;padding:0 6px;font-size:10px;line-height:12px;color:#0b0f14;font-weight:600;white-space:nowrap;text-overflow:ellipsis;overflow:hidden}
 .seg.thinking{background:var(--violet)}
 .seg.tool{background:#6f8fd0}
 .seg.model{background:var(--info)}
 .seg.compaction{background:var(--warn)}
-.seg.err{background:var(--bad);top:23px;height:6px}
+.seg.err{background:var(--bad);top:25px;height:6px;min-width:7px}
 .seg.live{background-image:repeating-linear-gradient(45deg,#ffffff30 0 5px,transparent 5px 10px);animation:pulse 2s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
 .seg:hover{outline:1px solid var(--text-2)}
@@ -332,7 +339,7 @@ details summary{cursor:pointer;font:11px var(--mono);color:var(--text-3);padding
 <script>
 const $=s=>document.querySelector(s),arr=x=>Array.isArray(x)?x:[];
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let S=null,view='overview',component='__all',task=null,lane=null,live=true,zoom=60,roleFilter='all',
+let S=null,view='overview',component='__all',task=null,lane=null,live=true,zoom=60,collapseIdle=true,roleFilter='all',
     traceFilter='all',traceQuery='',follow=true,selSeq=null,expanded=new Set(),filePreview=null;
 const runDetail=new Map();let detailPending=null;
 
@@ -856,27 +863,113 @@ function rollWindowFit(ls){const now=Date.now();
 function rollWindow(ls){const now=Date.now();
   if(zoom!=='fit')return{from:now-zoom*60000,to:now+Math.max(2000,zoom*60000*0.02)};
   return rollWindowFit(ls)}
+/**
+ * A piecewise time axis for the roll.
+ *
+ * A direction runs for days but works in bursts: across one 42-hour record only
+ * 52% of the span had any run active, so half the track was empty and every
+ * segment was squeezed into the other half. Stretches where nothing at all was
+ * running are collapsed to a fixed narrow width and drawn with a break marker,
+ * so the axis stays chronological and honest — time still moves left to right,
+ * and the reader can see exactly where it was skipped.
+ *
+ * Within an active stretch the mapping is linear, so relative durations there
+ * are still read directly off the track.
+ */
+function buildTimeMap(lanes, w, collapse) {
+  const span = Math.max(1, w.to - w.from);
+  if (!collapse) {
+    return { pct: t => ((t - w.from) / span) * 100, breaks: [], compressed: 0 };
+  }
+  // Idle shorter than this is left alone: collapsing it would add more visual
+  // noise than it removes.
+  const MIN_GAP = Math.max(60000, span * 0.02);
+  const GAP_PCT = 1.6;
+  const iv = lanes.map(l => [Math.max(w.from, l.startMs), Math.min(w.to, l.endMs)])
+    .filter(([a, b]) => b >= a).sort((x, y) => x[0] - y[0]);
+  const blocks = [];
+  for (const [a, b] of iv) {
+    const last = blocks[blocks.length - 1];
+    if (last && a - last[1] < MIN_GAP) last[1] = Math.max(last[1], b);
+    else blocks.push([a, b]);
+  }
+  if (!blocks.length) return { pct: t => ((t - w.from) / span) * 100, breaks: [], compressed: 0 };
+
+  const active = blocks.reduce((t, [a, b]) => t + (b - a), 0) || 1;
+  const gaps = Math.max(0, blocks.length - 1);
+  const scale = (100 - gaps * GAP_PCT) / active;
+  const marks = [];
+  let cursor = 0;
+  const pieces = blocks.map(([a, b], i) => {
+    const from = cursor;
+    cursor += (b - a) * scale;
+    const piece = { a, b, from, to: cursor };
+    if (i < blocks.length - 1) { marks.push({ at: cursor, ms: blocks[i + 1][0] - b }); cursor += GAP_PCT; }
+    return piece;
+  });
+  const pct = t => {
+    if (t <= pieces[0].a) return 0;
+    for (const p of pieces) {
+      if (t <= p.b) return p.from + (t - p.a) * scale;
+      const next = pieces[pieces.indexOf(p) + 1];
+      if (next && t < next.a) return p.to;
+    }
+    return 100;
+  };
+  return { pct, breaks: marks, compressed: span - active, blocks: pieces };
+}
 function ticks(w){const span=w.to-w.from,steps=[1e3,5e3,15e3,3e4,6e4,3e5,9e5,18e5,36e5,72e5,144e5];
   const step=steps.find(s=>span/s<=7)||36e5*24,out=[];
   for(let t=Math.ceil(w.from/step)*step;t<w.to;t+=step)out.push(t);return out}
 function tip(html,ev){const el=$('#tip');if(!html){el.style.display='none';return}
   el.innerHTML=html;el.style.display='block';
   el.style.left=Math.min(window.innerWidth-370,ev.clientX+14)+'px';el.style.top=(ev.clientY+16)+'px'}
-function rollLane(l,w){
-  const span=w.to-w.from,pct=t=>((t-w.from)/span)*100,b=l.breakdown||{},total=Math.max(1,b.total||l.durationMs);
+function rollLane(l,w,map){
+  const pct=map?map.pct:(t=>((t-w.from)/Math.max(1,w.to-w.from))*100),b=l.breakdown||{},total=Math.max(1,b.total||l.durationMs);
   const mix=[['thinking','var(--violet)'],['tool','var(--accent)'],['model','var(--info)'],['compaction','var(--warn)'],['waiting','#1d2733']]
     .map(([k,c])=>`<i style="width:${((b[k]||0)/total*100).toFixed(2)}%;background:${c}"></i>`).join('');
-  const segs=arr(l.segments).filter(s=>l.startMs+s.endMs>=w.from&&l.startMs+s.startMs<=w.to).map(s=>{
-    const a=l.startMs+s.startMs,z=l.startMs+s.endMs,left=Math.max(0,pct(a)),right=Math.min(100,pct(z));
+  // A two-second step inside a three-hour run is two thousandths of a percent of
+  // the track: no time-proportional axis can draw it, and drawing each one at a
+  // clickable minimum turned the lane into a smear of identical overlapping
+  // blocks. Steps that would collide are merged into one tile that says how many
+  // it stands for, so the roll shows honest density and every tile is a real
+  // target. Clicking one opens the first step it covers, in the trace beside it.
+  const MERGE_PCT=0.6;
+  const ordered=arr(l.segments).filter(s=>l.startMs+s.endMs>=w.from&&l.startMs+s.startMs<=w.to)
+    .slice().sort((x,y)=>x.startMs-y.startMs);
+  const clustered=[];
+  for(const s of ordered){
+    const a=pct(l.startMs+s.startMs),z=pct(l.startMs+s.endMs);
+    const last=clustered[clustered.length-1];
+    // Merged regardless of kind: steps alternate between reasoning and tool
+    // calls constantly, so a same-kind rule almost never fires and the lane
+    // stays a smear. The lane's mix bar still carries the breakdown by kind, and
+    // anything long enough to matter is wider than the merge distance and stays
+    // its own tile — the 28-minute check does not disappear into its neighbours.
+    if(last&&a-last.right<MERGE_PCT&&(z-a)<MERGE_PCT&&(last.right-last.left)<MERGE_PCT){
+      last.right=Math.max(last.right,z);last.count++;last.ms+=s.endMs-s.startMs;
+      last.endMs=Math.max(last.endMs,s.endMs);
+      last.kinds[s.kind]=(last.kinds[s.kind]||0)+1;
+      // An error is never absorbed quietly: a merged tile holding one is marked.
+      if(s.isError)last.isError=true;
+      if(s.live)last.live=true;
+      if((last.kinds[s.kind]||0)>(last.kinds[last.kind]||0))last.kind=s.kind;
+    } else clustered.push({kind:s.kind,isError:s.isError,live:s.live,label:s.label,seq:s.seq,
+      startMs:s.startMs,endMs:s.endMs,ms:s.endMs-s.startMs,count:1,left:a,right:z,kinds:{[s.kind]:1}});
+  }
+  const segs=clustered.map(s=>{
+    const a=l.startMs+s.startMs,z=l.startMs+s.endMs;
+    const left=Math.max(0,s.left),right=Math.min(100,s.right);
     const wide=right-left;
+    const many=s.count>1;
     // A long check rendered as an unlabelled block reads as dead space. Once a
     // segment is wide enough to hold text, it says what ran and for how long,
     // rather than hiding both in a tooltip.
-    const label=wide>=7?`<span class="seg-label">${esc(s.label)} · ${fmt(s.endMs-s.startMs)}${s.live?' · running':''}</span>`:'';
-    return `<div class="seg ${s.isError?'err':esc(s.kind)} ${s.live?'live':''} ${selSeq===s.seq&&lane===l.id?'sel':''}"
+    const label=wide>=7?`<span class="seg-label">${many?s.count+' steps · '+fmt(s.ms):esc(s.label)+' · '+fmt(s.ms)}${s.live?' · running':''}</span>`:'';
+    return `<div class="seg ${s.isError?'err':esc(s.kind)} ${s.live?'live':''} ${many?'many':''} ${selSeq===s.seq&&lane===l.id?'sel':''}"
       data-seq="${esc(s.seq)}" data-lane="${esc(l.id)}"
-      data-tip="${esc(s.label+' · '+fmt(s.endMs-s.startMs)+' · '+clock(a)+' → '+clock(z)+(s.isError?' · error':'')+(s.live?' · still running':''))}"
-      style="left:${left}%;width:${Math.max(0.25,wide)}%">${label}</div>`}).join('');
+      data-tip="${esc((many?s.count+' steps ('+s.label+' and alike) · '+fmt(s.ms)+' of work':s.label+' · '+fmt(s.ms))+' · '+clock(a)+' → '+clock(z)+(s.isError?' · error':'')+(s.live?' · still running':''))}"
+      style="left:${left}%;width:${Math.max(0.35,wide)}%">${label}</div>`}).join('');
   const left=Math.max(0,pct(l.startMs)),right=Math.min(100,pct(l.endMs));
   return `<div class="lane ${lane===l.id?'active':''}" data-lane="${esc(l.id)}">
     <div class="lane-name"><b>${esc(l.role)}</b>
@@ -890,11 +983,13 @@ function execution(){
     +['all','orchestrator','executor','watcher'].map(r=>`<button class="chip ${roleFilter===r?'active':''}" data-role="${r}">${r}</button>`).join('')
     +'<span class="t-micro" style="margin-left:12px">window</span>'
     +[['fit','fit'],[15,'15m'],[60,'1h'],[360,'6h']].map(([z,n])=>`<button class="chip ${zoom===z?'active':''}" data-zoom="${z}">${n}</button>`).join('')
+    +`<button class="chip ${collapseIdle?'active':''}" data-collapse="1" title="Collapse stretches where nothing was running">${collapseIdle?'idle collapsed':'show idle'}</button>`
     +(component!=='__all'?`<span class="chip active" style="margin-left:auto">scoped to ${esc((arr(S.components).find(c=>c.component_id===component)||{}).title||'thread')}</span>`:'')
     +(task?'<button class="chip active" data-clear="1">clear task filter</button>':'');
   $('#rollbar').querySelectorAll('[data-role]').forEach(el=>el.onclick=()=>{roleFilter=el.dataset.role;invalidate('roll');paint()});
   $('#rollbar').querySelectorAll('[data-zoom]').forEach(el=>el.onclick=()=>{zoom=el.dataset.zoom==='fit'?'fit':Number(el.dataset.zoom);invalidate('roll');paint()});
   $('#rollbar').querySelectorAll('[data-clear]').forEach(el=>el.onclick=()=>{task=null;invalidate('roll');paint()});
+  $('#rollbar').querySelectorAll('[data-collapse]').forEach(el=>el.onclick=()=>{collapseIdle=!collapseIdle;invalidate('roll');paint()});
   if(!lane||!ls.some(x=>x.id===lane)){const rank=['executor','orchestrator','watcher'];
     lane=(ls.filter(x=>x.state==='active').sort((a,b)=>rank.indexOf(a.role)-rank.indexOf(b.role))[0]||ls[0]||{}).id||null}
   const roll=$('#roll'),keep=roll.scrollTop;
@@ -903,14 +998,43 @@ function execution(){
   let shown=ls.filter(l=>l.endMs>=w.from&&l.startMs<=w.to).slice(0,40);
   if(!shown.length){w=rollWindowFit(ls);shown=ls.filter(l=>l.endMs>=w.from&&l.startMs<=w.to).slice(0,40)}
   const span=w.to-w.from,now=Date.now();
-  $('#roll-note').textContent=shown.length+' of '+ls.length+' runs · '+clock(w.from)+' → '+clock(w.to);
+  // One axis for every lane in this paint, so a collapsed gap lands at the same
+  // place on all of them.
+  const map=buildTimeMap(shown,w,collapseIdle);
+  const skipped=map.compressed?' · '+fmt(map.compressed)+' idle collapsed':'';
+  $('#roll-note').textContent=shown.length+' of '+ls.length+' runs · '+clock(w.from)+' → '+clock(w.to)+skipped;
+  const rulerTicks=(map.blocks||[{a:w.from,b:w.to,from:0,to:100}]).map(p=>
+    `<div class="tick" style="left:${p.from.toFixed(3)}%">${clock(p.a)}</div>`).join('')
+    +map.breaks.map(g=>`<div class="tick brk" style="left:${g.at.toFixed(3)}%" title="${esc(fmt(g.ms)+' with nothing running')}">⋯</div>`).join('');
   roll.innerHTML='<div class="ruler"><div class="t-micro" style="padding:6px 12px">run</div><div class="ticks">'
-    +ticks(w).map(t=>`<div class="tick" style="left:${((t-w.from)/span*100).toFixed(3)}%">${clock(t)}</div>`).join('')
-    +'</div></div><div style="position:relative">'+shown.map(l=>rollLane(l,w)).join('')
-    +`<div class="nowline" style="left:calc(190px + (100% - 190px) * ${Math.max(0,Math.min(1,(now-w.from)/span)).toFixed(4)})"></div></div>`;
+    +(collapseIdle?rulerTicks:ticks(w).map(t=>`<div class="tick" style="left:${((t-w.from)/span*100).toFixed(3)}%">${clock(t)}</div>`).join(''))
+    +'</div></div><div style="position:relative">'
+    +map.breaks.map(g=>`<div class="gapmark" style="left:calc(190px + (100% - 190px) * ${(g.at/100).toFixed(4)})" title="${esc(fmt(g.ms)+' with nothing running')}"></div>`).join('')
+    +shown.map(l=>rollLane(l,w,map)).join('')
+    +`<div class="nowline" style="left:calc(190px + (100% - 190px) * ${Math.max(0,Math.min(1,map.pct(now)/100)).toFixed(4)})"></div></div>`;
   roll.scrollTop=keep;
   roll.querySelectorAll('[data-lane]').forEach(el=>el.onclick=e=>{lane=el.dataset.lane;
-    const seg=e.target.closest('[data-seq]');selSeq=seg?Number(seg.dataset.seq):null;invalidate('roll');paint();if(seg)scrollToStep(selSeq)});
+    const seg=e.target.closest('[data-seq]');
+    if(seg)selSeq=Number(seg.dataset.seq);
+    else{
+      // The median segment is about two seconds long, which is a fraction of a
+      // pixel on a multi-hour axis. Requiring an exact hit made most of a trace
+      // unreachable, so a click anywhere on the track takes the nearest one.
+      const track=el.querySelector('.track');
+      const lm=arr(S.execution?.lanes).find(x=>x.id===el.dataset.lane);
+      if(track&&lm&&arr(lm.segments).length){
+        const box=track.getBoundingClientRect();
+        const at=((e.clientX-box.left)/Math.max(1,box.width))*100;
+        let best=null,bestD=Infinity;
+        for(const g of lm.segments){
+          const a=map.pct(lm.startMs+g.startMs),z=map.pct(lm.startMs+g.endMs);
+          const d=at<a?a-at:at>z?at-z:0;
+          if(d<bestD){bestD=d;best=g}
+        }
+        selSeq=best?best.seq:null;
+      } else selSeq=null;
+    }
+    invalidate('roll');paint();if(selSeq!==null)scrollToStep(selSeq)});
   roll.querySelectorAll('[data-tip]').forEach(el=>{el.onmousemove=e=>tip(el.dataset.tip,e);el.onmouseleave=()=>tip(null)});
   traceView(ls.find(x=>x.id===lane));
 }

@@ -62,35 +62,35 @@ consoles moving while you speak; each section says what to show and what the vie
 
 Move through the dashboard, narrating what is on screen. Do not describe features; show the run.
 
-**Direction and threads** (~15s)
+**Direction and threads** (~10s)
 > This direction asks how transformer inference mechanisms adapt across memory-pressure and
 > long-context regimes. Four research threads, each carrying its own evolving understanding, and
 > seventeen recorded outcomes across forty-three hours.
 
-**The piano roll** (~25s)
+**The piano roll** (~15s)
 > This is the actual execution, on a real time axis: reasoning in one colour, tool calls in
 > another, model wait, idle, errors. You can see where the time went — and it is mostly not the
 > GPU. Measured across this run: about an hour of tool time against an hour and a half waiting on
 > the model, with the GPU at a third utilisation.
 
-**The agent trace** (~25s)
+**The agent trace** (~10s)
 > Clicking a run opens the transcript: the model's reasoning, the experiment code it wrote, the
 > checks it ran. A hundred and twenty-two of the hundred and twenty-five runs carry one, published
 > without publishing my machine — I'll come back to how.
 
-**A finding, with its envelope** (~25s)
+**A finding, with its envelope** (~20s)
 > Here is the result I would point at. The agent tested whether attention-mass KV-cache eviction
 > keeps the tokens a later question needs. It scored zero percent on non-local retrieval at half
 > cache budget — indistinguishable from evicting at random. That refuted the study's *own* leading
 > hypothesis, and it was recorded as `bounded`, not rewritten into a success. Every finding ends
 > with the envelope its evidence covers and what would not follow from it.
 
-**A refutation** (~15s)
+**A refutation** (~10s)
 > And here it recorded a refutation: randomized-Hadamard rotation does not prevent key quantization
 > damage. Twelve supported, three bounded, one refuted, one inconclusive. A loop that keeps whatever
-> improved the number has nowhere to put that fourth category.
+> improved the number has nowhere to put a refutation or an inconclusive result.
 
-**The agent stopping** (~10s)
+**The agent stopping** (~5s)
 > And here the orchestrator paused the direction itself, judging nothing worth doing yet. It then
 > sat at zero cost until new evidence arrived. Not a timer — evidence.
 
@@ -101,7 +101,8 @@ Move through the dashboard, narrating what is on screen. Do not describe feature
 >
 > Best in-sample Sharpe climbs from 0.78 to 4.11 as you search harder. Out of sample it *falls*. And
 > once you charge ten basis points of trading cost, the best-looking strategy of five thousand
-> returns minus 0.89. That is the project's whole thesis, measured in a domain it was not built for.
+> returns minus 0.89. That is the same research principle in a second domain, with a different
+> evaluator and different resource requirements.
 >
 > A decade of later data — 2016 to 2026 — sits outside that machine entirely. The agent has never
 > seen it.

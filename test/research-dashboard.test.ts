@@ -193,3 +193,21 @@ test("a published record offers no control that would 405", () => {
   assert.match(panel, /if\(continuousBtn\)/);
   assert.match(panel, /if\(resume\)/);
 });
+
+test("the piano roll draws tiles a reader can hit", () => {
+  // Measured on a real record: the median step is under two seconds, which is
+  // four hundredths of a pixel on a multi-hour axis. Drawing each at a clickable
+  // minimum produced a smear of overlapping identical blocks.
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  const lane = html.slice(html.indexOf("function rollLane"), html.indexOf("function execution()"));
+  assert.match(lane, /MERGE_PCT/);
+  assert.match(lane, /last\.count\+\+/);
+  // A failure must never vanish into a merged neighbour.
+  assert.match(lane, /if\(s\.isError\)last\.isError=true/);
+  // Clicking anywhere on a lane selects the nearest step rather than requiring a
+  // pixel-perfect hit.
+  const roll = html.slice(html.indexOf("roll.querySelectorAll('[data-lane]')"));
+  assert.match(roll, /bestD/);
+  // And idle stretches are collapsed with a visible break, not silently.
+  assert.match(html, /class="gapmark"/);
+});

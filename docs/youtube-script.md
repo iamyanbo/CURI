@@ -149,7 +149,7 @@ Be first to say it isn't new:
 > Now — if you know this literature, you recognise this. It's the failure mode StreamingLLM and
 > later needle-retrieval work describe. Same for the other findings: the speculative decoding result
 > is the standard acceptance-rate/latency crossover, and the K/V quantization asymmetry is what KIVI
-> reports. Three of four reproduce published work.
+> reports. Three of the four headline attention results reproduce published work.
 >
 > I'd rather say that myself than have you notice it. The claim I'm making isn't novelty. It's that
 > these were independently re-derived, with controls, on hardware I control, and that the failures
@@ -159,7 +159,8 @@ Be first to say it isn't new:
 
 ## Chapter 5 — What broke (12:30 – 17:00)
 
-The most valuable chapter for a technical audience. Four stories, ~60 seconds each.
+The most valuable chapter for a technical audience. Six short stories, with the three scheduling
+stories treated as one thread.
 
 *On screen: show the failure or misleading output first, then the code or trace that explains it,
 and finally the fix.*
@@ -248,14 +249,16 @@ Close with the bug it caught — this lands well:
 End on the limitations, not a call to action:
 
 > Everything here is bounded to 0.5B–1.5B models at 4K context on one consumer GPU. That's
-> *simulated* memory pressure, not the long-context regime this direction ultimately targets.
+> *simulated* memory pressure, not the long-context regime the attention direction ultimately
+> targets. The strategy direction ran on a DGX Spark, but its results are still provisional and its
+> withheld decade has not been evaluated.
 > Sample sizes are small. The eviction study measures the symptom, not the mechanism — it doesn't
 > record whether the needle token survived eviction, so "evicted it" and "kept it but couldn't use
 > it" are still undistinguished.
 >
-> And the honest summary is the one I started with: it re-derived published results. It hasn't found
-> anything new. Whether this process *can* is an open question about scale, and I'd rather leave it
-> as a question than dress it up.
+> The honest summary is the one I started with: the attention run re-derived published results, and
+> the strategy run is not a validated trading result. Whether this process *can* produce something
+> new is an open question about scale, and I'd rather leave it as a question than dress it up.
 >
 > It's MIT licensed, it runs locally on your own API key, and the cloud parts are optional. Link's
 > in the description.
