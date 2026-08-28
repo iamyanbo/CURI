@@ -180,3 +180,16 @@ test("cited evidence names the study and opens it", () => {
   assert.match(understanding, /src&&src\.canonical_url/);
   assert.match(understanding, /no link recorded/);
 });
+
+test("a published record offers no control that would 405", () => {
+  // On the mirror the supervisor is reported as not running, which rendered a
+  // "Resume research" button and a continuous toggle. Both POST to /api/control,
+  // which a mirror answers 405 — so on camera they stick at "starting…".
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  const panel = html.slice(html.indexOf("function nowPanel()"), html.indexOf("function overview("));
+  assert.match(panel, /const published=Boolean\(S&&S\.published\)/);
+  assert.match(panel, /\+\(published\?''/);
+  // And the handlers must tolerate the buttons being absent.
+  assert.match(panel, /if\(continuousBtn\)/);
+  assert.match(panel, /if\(resume\)/);
+});

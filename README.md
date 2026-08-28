@@ -360,7 +360,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 138 tests
+npm test        # 139 tests
 npm run typecheck
 ```
 

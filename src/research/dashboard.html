@@ -479,18 +479,25 @@ function nowPanel(){
       :S.supervisor?.running?'The supervisor is up and will wake the orchestrator when something changes.'
       :'The supervisor is not running, so no research is being done.';
     const continuous=Boolean(S.continuous);
-    $('#now').innerHTML='<div class="t-small">'+esc(why)+'</div>'
-      +'<div class="actions">'
-      +((paused||!S.supervisor?.running)?'<button class="btn primary" id="resume">Resume research</button>':'')
-      +'<button class="btn" id="continuous">'+(continuous?'Continuous · on':'Continuous · off')+'</button>'
-      +'<span class="t-small" style="color:var(--text-3);flex:1;min-width:220px">Continuous keeps an unattended run going when the orchestrator judges a milestone reached. The pause and its reasoning are still recorded either way.</span>'
-      +'</div>';
+    // A published record has no supervisor to resume and no control endpoint to
+    // call: the mirror answers 405. Rendering the buttons there offered controls
+    // that could only fail, and on a read-only page they misdescribe what it is.
+    const published=Boolean(S&&S.published);
+    $('#now').innerHTML='<div class="t-small">'+esc(published
+        ? 'This is a published record of a completed run, served read-only. It shows the research as it stood when it was last published; it cannot be steered from here.'
+        : why)+'</div>'
+      +(published?'':'<div class="actions">'
+        +((paused||!S.supervisor?.running)?'<button class="btn primary" id="resume">Resume research</button>':'')
+        +'<button class="btn" id="continuous">'+(continuous?'Continuous · on':'Continuous · off')+'</button>'
+        +'<span class="t-small" style="color:var(--text-3);flex:1;min-width:220px">Continuous keeps an unattended run going when the orchestrator judges a milestone reached. The pause and its reasoning are still recorded either way.</span>'
+        +'</div>');
     const resume=$('#resume');
     if(resume)resume.onclick=async()=>{resume.disabled=true;resume.textContent='starting…';
       await fetch('/api/control',{method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({action:'resume',reason:'Resumed from the dashboard.'})});
       invalidate('now');await load()};
-    $('#continuous').onclick=async()=>{
+    const continuousBtn=$('#continuous');
+    if(continuousBtn)continuousBtn.onclick=async()=>{
       await fetch('/api/control',{method:'POST',headers:{'content-type':'application/json'},
         body:JSON.stringify({action:'continuous',enabled:!continuous})});
       invalidate('now');await load()};
