@@ -6,7 +6,7 @@ This branch preserves a deployment mode that is separate from the original cloud
 
 | Component | Location |
 |---|---|
-| DeepSeek inference | DGX Spark `gx10-6ca9.local` |
+| DeepSeek inference | DGX Spark `dgx-spark.local` |
 | CURI supervisor, workers and dashboard | Windows PC |
 | Research state | PC-local SQLite under `.curi/` |
 | Generic web search | Direct Exa MCP retrieval from the PC |
@@ -26,7 +26,7 @@ From PowerShell in the repository:
 .\scripts\spark.ps1 wait
 ```
 
-The launcher connects over SSH using `~/.ssh/gx10_codex_ed25519`, starts the existing DeepSeek repository with `ABLATE=1`, and waits for `http://<spark-address>:8888/health`. Changing the ablation flag forces a container recreation and compile-cache rebuild, so the first boot can take several minutes.
+The launcher connects over SSH using `~/.ssh/id_ed25519` (override with `SPARK_KEY`), starts the existing DeepSeek repository with `ABLATE=1`, and waits for `http://<spark-address>:8888/health`. Changing the ablation flag forces a container recreation and compile-cache rebuild, so the first boot can take several minutes.
 
 To inspect the endpoint values for `.env`:
 
@@ -39,7 +39,7 @@ The expected configuration is:
 ```dotenv
 AR_LOCAL_ONLY=1
 AR_MODEL_PROVIDER=openai-compatible
-AR_MODEL_BASE_URL=http://gx10-6ca9.local:8888/v1
+AR_MODEL_BASE_URL=http://dgx-spark.local:8888/v1
 AR_MODEL=deepseek-v4-flash-0731
 AR_MAX_COST_USD=0
 ```

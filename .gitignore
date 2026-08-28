@@ -22,3 +22,11 @@ domains/tinyml/data/*.bin
 tmp/
 pi-extension/
 .autoresearch-legacy-remnants-*/
+
+# Compiled Python artefacts and the legacy campaign harness's protected
+# evaluators. The research runtime never reads them: it stores a domain path
+# and treats .autoresearch-protected as a name the executor may not touch.
+__pycache__/
+.autoresearch-protected/
+domains/*/candidate/
+domains/tinyml/

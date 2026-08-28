@@ -1,7 +1,0 @@
-{
-  "lookback": 60,
-  "position_scale": 1.0,
-  "rebalance_days": 1,
-  "vol_target": 0.0,
-  "n_factors": 1
-}

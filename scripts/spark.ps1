@@ -31,10 +31,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$SparkUser  = 'iamyanbo'
-$SparkHostname = 'gx10-6ca9.local'
-$SparkKey   = Join-Path $env:USERPROFILE '.ssh\gx10_codex_ed25519'
-$RepoDir    = '~/DeepSeek-v4-Flash-One-DGX-Spark'
+# Point these at your own machine, or set the environment variables instead of
+# editing the file. They are read from the environment first so a public copy of
+# this script carries nobody's hostname.
+$SparkUser     = if ($env:SPARK_USER) { $env:SPARK_USER } else { 'ubuntu' }
+$SparkHostname = if ($env:SPARK_HOST) { $env:SPARK_HOST } else { 'dgx-spark.local' }
+$SparkKey      = if ($env:SPARK_KEY)  { $env:SPARK_KEY }  else { Join-Path $env:USERPROFILE '.ssh\id_ed25519' }
+$RepoDir       = if ($env:SPARK_REPO) { $env:SPARK_REPO } else { '~/DeepSeek-v4-Flash-One-DGX-Spark' }
 $Port       = 8888
 $ModelName  = 'deepseek-v4-flash-0731'
 
