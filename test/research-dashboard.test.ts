@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { buildResearchDashboardState, insideWorkspace } from "../src/research/server.js";
+import { buildResearchDashboardState, insideWorkspace, researchDashboardAsset } from "../src/research/server.js";
 import { traceBreakdown, traceSegments } from "../src/research/trace.js";
 import { ResearchStore } from "../src/research/store.js";
 
@@ -40,6 +40,14 @@ test("component writeups render as full-width prose without repeating the card t
   assert.match(html, /\.component-writeup\{width:100%;max-width:none;/);
   assert.match(html, /class="prose component-writeup" id="comp-desc"/);
   assert.match(html, /prose\(\$\('#comp-desc'\),stripLeadingHeading\(c\.description_md\|\|''\)\)/);
+});
+
+test("dashboard Markdown and math assets are served instead of falling back to code blocks", () => {
+  const marked = researchDashboardAsset("/vendor/marked.js");
+  assert.ok(marked && marked.body.length > 1_000);
+  assert.match(marked.contentType, /javascript/);
+  assert.match(researchDashboardAsset("/vendor/katex.css")?.contentType ?? "", /css/);
+  assert.equal(researchDashboardAsset("/vendor/fonts/../../package.json"), null);
 });
 
 test("dashboard derives tentative, accepted, and superseded knowledge without a score", () => {

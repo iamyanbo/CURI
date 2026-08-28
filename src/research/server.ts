@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +13,27 @@ import {
 } from "./runtime.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const REQUIRE = createRequire(import.meta.url);
+const MARKED_DIST = dirname(REQUIRE.resolve("marked"));
+const KATEX_DIST = dirname(REQUIRE.resolve("katex"));
+
+export function researchDashboardAsset(pathname: string): { body: Buffer; contentType: string } | null {
+  let path: string | null = null; let contentType = "application/octet-stream";
+  if (pathname === "/vendor/marked.js") {
+    path = join(MARKED_DIST, "marked.umd.js"); contentType = "text/javascript; charset=utf-8";
+  } else if (pathname === "/vendor/katex.js") {
+    path = join(KATEX_DIST, "katex.min.js"); contentType = "text/javascript; charset=utf-8";
+  } else if (pathname === "/vendor/katex.css") {
+    path = join(KATEX_DIST, "katex.min.css"); contentType = "text/css; charset=utf-8";
+  } else if (pathname.startsWith("/vendor/fonts/")) {
+    const name = pathname.slice("/vendor/fonts/".length);
+    if (!/^[A-Za-z0-9._-]+$/.test(name)) return null;
+    path = join(KATEX_DIST, "fonts", name);
+    contentType = name.endsWith(".woff2") ? "font/woff2" : name.endsWith(".woff") ? "font/woff" : contentType;
+  }
+  if (!path || !existsSync(path) || !statSync(path).isFile()) return null;
+  return { body: readFileSync(path), contentType };
+}
 
 /** Bytes of a workspace file the preview endpoint will return. */
 const PREVIEW_LIMIT = 256 * 1024;
@@ -272,6 +294,12 @@ export async function serveResearchDashboard(input: { projectRoot: string; direc
   page();
   const server = createServer(async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
+    if (request.method === "GET" && url.pathname.startsWith("/vendor/")) {
+      const asset = researchDashboardAsset(url.pathname);
+      if (!asset) { json(response, 404, { error: "not found" }); return; }
+      response.writeHead(200, { "Content-Type": asset.contentType, "Cache-Control": "public, max-age=86400" });
+      response.end(asset.body); return;
+    }
     if (request.method === "GET" && url.pathname === "/api/state") {
       try { json(response, 200, buildResearchDashboardState(input.projectRoot, url.searchParams.get("direction") ?? input.directionId)); }
       catch (error) { json(response, 500, { error: String(error) }); }
