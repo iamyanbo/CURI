@@ -1,0 +1,31 @@
+{
+  "_comment": "This direction studies overfitting itself, so it deliberately declares no metric to maximize. A Sharpe target would make the search the very thing under investigation: the failure mode here is not a weak strategy but a strong-looking one that does not survive an unseen period. The runtime records this file as provenance and does not interpret it.",
+  "id": "finance-generalization",
+  "question": "Under what conditions does a systematic strategy discovered on historical data retain its edge out of sample, and by what evidence can that be judged before deployment?",
+  "data": {
+    "visible": "data/kenfrench/*.parquet — Ken French daily factor and industry-portfolio returns, 1926/1963 through 2015-12-31",
+    "manifest": "data/kenfrench/MANIFEST.json — source URL, SHA-256, row counts and date range for every file",
+    "units": "returns are in percent, as published; -99.99 and -999 have been replaced with missing values",
+    "holdout": "A later period exists and is deliberately absent from this project. It is not in the repository, not in any worktree, and no path to it is provided. Findings must therefore be argued from evidence available before it, which is the point."
+  },
+  "invariants": [
+    "A split must be temporal. Random or k-fold splits leak in this domain because adjacent days share regime, volatility cluster and often the same position.",
+    "Every reported result states how many strategy variants were examined to produce it. An unreported search is an unreported multiple-testing problem.",
+    "Transaction costs and a realistic execution lag are declared for any strategy-level claim, or the claim is scoped as frictionless and labelled so.",
+    "A backtest whose start date was chosen after seeing results is not evidence. Windows are fixed before the test and reported whether or not they flatter the result.",
+    "Survivorship and look-ahead are addressed explicitly or the claim is bounded accordingly."
+  ],
+  "methods_of_interest": [
+    "walk-forward and purged/embargoed cross-validation",
+    "deflated and probabilistic Sharpe ratios, and other multiple-testing corrections",
+    "the relationship between the number of trials and the expected maximum in-sample Sharpe under a null",
+    "regime segmentation and stability of parameters across subperiods",
+    "reality-check and stationary-bootstrap procedures",
+    "sensitivity of a result to cost assumptions, universe definition and rebalancing frequency"
+  ],
+  "environment": {
+    "measured_by": "research preflight --refresh",
+    "python": "numpy, pandas, scipy, statsmodels, scikit-learn, pyarrow",
+    "note": "No GPU is required for this direction, which is why it runs on different hardware from the attention one."
+  }
+}

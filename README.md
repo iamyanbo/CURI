@@ -328,6 +328,14 @@ npx tsx src/cli.ts doctor        # checks the credential, the model and the tool
 npx tsx src/cli.ts research preflight --refresh     # measure this machine
 npx tsx src/cli.ts research init   --direction my-direction --title "My research direction"   --brief "What should be investigated and why"   --domain domains/attention.domain.json   --topic "search topic for the watcher"
 
+```
+
+A domain file is a direction note, not a configuration: the runtime records its path and never
+parses it. `domains/` ships the two used here — one for transformer inference, one for strategy
+generalization — and writing your own is a matter of stating the question, the environment and the
+invariants a result has to respect.
+
+```bash
 npx tsx src/cli.ts research supervisor start        # the research loop
 npx tsx src/cli.ts research watch start             # literature intake
 npx tsx src/cli.ts research dashboard start --port 7331
