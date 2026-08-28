@@ -1,10 +1,11 @@
 # CURI — Cumulative Research & Inquiry — long-form YouTube script
 
-Target: **18–22 minutes**. Structure is seven chapters; each opens with what is on screen, then the
+Target: **22–25 minutes**. Structure is eight chapters; each opens with what is on screen, then the
 spoken line. Talking points are written as prose you can read aloud or paraphrase — they are meant
 to sound like someone explaining their own work, not a narrated feature list.
 
-If you record only part of it, chapters 3, 5 and 6 are the ones that carry the video.
+If you record only part of it, chapters 5, 6 and 7 are the ones that carry the video: what the
+runtime generalises to, what broke, and how a trace is published safely.
 
 This is a production script: every chapter should have a visible action or artefact on screen. Do
 not leave the viewer looking at a static dashboard while a paragraph of architecture is narrated.
@@ -16,7 +17,8 @@ not leave the viewer looking at a static dashboard while a paragraph of architec
 **Suggested title:** *I built an autonomous research agent that's allowed to fail*
 **Chapters for the description:**
 `0:00 The problem · 2:30 What it does differently · 5:00 Architecture · 9:00 A real finding ·
-12:30 What broke · 17:00 Publishing traces safely · 20:00 What it can't do yet`
+12:30 Three instances, one runtime · 15:30 What broke · 20:00 Publishing traces safely ·
+23:00 What it can't do yet`
 
 ---
 
@@ -109,6 +111,9 @@ Then the stack, briefly:
 > Firestore for the published record and Cloud Run for the public mirror. Each experiment runs in
 > its own git worktree, so an attempt can be resumed rather than restarted.
 
+> The attention direction is the published example. The strategy-generalization run stays local on
+> the DGX Spark; it is shown through a forwarded dashboard and is not part of the Firestore record.
+
 > The run I am showing has four research threads and seventeen recorded outcomes, and there is a
 > second direction on other hardware with five more threads. The headline findings are a compact
 > summary of those outcomes, not twenty-one claims of new scientific discovery.
@@ -157,7 +162,53 @@ Be first to say it isn't new:
 
 ---
 
-## Chapter 5 — What broke (12:30 – 17:00)
+## Chapter 5 — Three instances, one runtime (12:30 – 15:30)
+
+*On screen: the cloud mirror, then the forwarded Spark dashboard, then the local private one.*
+
+This is the chapter that tests whether any of the previous four generalise. Show all three
+side by side if you can; the point lands faster than it can be said.
+
+> Everything so far came from one direction on one machine. That proves very little — a system
+> that works on the problem it was built for usually does.
+>
+> So here is the same runtime, unchanged, in three places at once.
+
+**The published one** (~30s)
+> This is the attention and KV-cache direction, running on a consumer GPU with Gemini through
+> Vertex, publishing to Firestore and served from Cloud Run. Forty-three hours, seventeen
+> outcomes, forty dollars.
+
+**A different field, different hardware** (~45s)
+> This is a DGX Spark asking a completely different question: when does a trading strategy found
+> in historical data keep its edge outside the window it was found in? Different domain, different
+> machine, same code — and a decade of later data deliberately kept off that box.
+
+**And one I actually use** (~60s)
+> This third one is not in the public repository, because it is mine. It is a private finance
+> pipeline I run for my own work, on real market data, and it is the one I would point at if you
+> asked whether this is a demo or a tool.
+>
+> Look at the spend: zero. Not "cheap" — zero. There is no API bill because there is no API. The
+> agents are talking to a DeepSeek model I host on the Spark, over an OpenAI-compatible endpoint,
+> and the runtime does not care which of the two it is talking to.
+
+**Why that is more than a cost trick** (~45s)
+> When I added that, I had to fix something revealing: the cost estimator charged an unknown model
+> the list price of a hosted one, so free local inference was accruing imaginary spend and would
+> eventually have tripped a ceiling against money nobody was paying. Self-hosted inference is
+> recorded as zero now.
+>
+> The provider is one line of configuration — Gemini, Vertex, OpenRouter, or any OpenAI-compatible
+> server on your own network. Which means the cloud parts of this are genuinely optional. The
+> research loop, the gates, the record and the dashboard all work with no cloud account at all.
+
+*Cut to the `.env` showing `AR_MODEL_PROVIDER=openai-compatible` and `AR_MAX_COST_USD=0`, then back
+to the running dashboard with its spend at $0.00.*
+
+---
+
+## Chapter 6 — What broke (15:30 – 20:00)
 
 The most valuable chapter for a technical audience. Six short stories, with the three scheduling
 stories treated as one thread.
@@ -210,7 +261,7 @@ and finally the fix.*
 
 ---
 
-## Chapter 6 — Publishing traces without publishing your machine (17:00 – 20:00)
+## Chapter 7 — Publishing traces without publishing your machine (20:00 – 23:00)
 
 *On screen: the mirror's agent trace, then `trace-publish.ts`, then a withheld step.*
 
@@ -242,13 +293,13 @@ Close with the bug it caught — this lands well:
 
 ---
 
-## Chapter 7 — What it can't do yet (20:00 – 22:00)
+## Chapter 8 — What it can't do yet (23:00 – 25:00)
 
 *On screen: the README's "Limits of the current evidence".*
 
 End on the limitations, not a call to action:
 
-> Everything here is bounded to 0.5B–1.5B models at 4K context on one consumer GPU. That's
+> The attention results are bounded to 0.5B–1.5B models at 4K context on one consumer GPU. That's
 > *simulated* memory pressure, not the long-context regime the attention direction ultimately
 > targets. The strategy direction ran on a DGX Spark, but its results are still provisional and its
 > withheld decade has not been evaluated.
@@ -279,5 +330,8 @@ End on the limitations, not a call to action:
   21 syntheses, 5 threads.
 - **Do not quote the finance CPCV or PBO figures.** That table disagrees with the search-intensity
   table on out-of-sample Sharpe and the contradiction is unresolved.
+- **The private instance is the strongest thing you have and the easiest to undersell.** Say out
+  loud that it is not in the public repository and that you use it for your own work: a tool
+  someone actually runs is a different claim from a demo that runs once.
 - **Do not claim novelty anywhere**, including the title and thumbnail. The video's credibility is
   the whole asset.

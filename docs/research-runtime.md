@@ -62,7 +62,7 @@ The runtime measures the machine before delegation and hands the same verified
 sheet to the orchestrator and the executor: working interpreters and the exact
 launcher form the sandbox accepts, accelerators and their memory, installed
 packages, and the command-sandbox rules. Inspect or invalidate it with
-`research preflight [--refresh]`; it is cached in `.autoresearch/preflight.json`.
+`research preflight [--refresh]`; it is cached in `.curi/preflight.json`.
 
 Environment discovery is a property of the machine, not a research question. An
 executor that spends its turn probing interpreters and launcher syntax returns

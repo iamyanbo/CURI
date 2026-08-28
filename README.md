@@ -7,7 +7,7 @@
 
 The current wave of harness development and “autoresearch” pipelines has largely been designed to
 maximize benchmark scores: propose a change, run the evaluator, keep it if the number improves,
-and repeat. While this is a reasonable engineering loop when the benchmark is the specification. It is a poor
+and repeat. This is a reasonable engineering loop when the benchmark is the specification, but it is a poor
 motivation for research. It invites Goodhart’s law: once a measure becomes a target, it ceases to
 be a good measure. In practice, these pipelines often devolve into hyperparameter optimization. For the most part, I view this as an irresponsible use of an LLM's capabilities, since well-established algorithms already exist for tuning hyperparameters.
 
@@ -29,9 +29,9 @@ It is to test whether an autonomous process can produce research that another pe
 question and build on.
 
 In unattended runs on a consumer GPU and a DGX Spark, the prototype produced **21 recorded
-outcomes** across two domains — including one that **refuted its own hypothesis**, one that recorded
-a **wall-clock slowdown** as a real result, and one outright **refutation**. The rest of this document describes the runtime and the constraints
-that make those findings possible.
+outcomes** across two domains — including a thread that **refuted its own hypothesis** and another
+that recorded a **wall-clock slowdown** as a real result. The rest of this document describes the
+runtime and the constraints that make those findings possible.
 
 **Live mirror:** https://research-mirror-qdqttyl3jq-uc.a.run.app
 
@@ -268,8 +268,8 @@ them.
 The runtime is intended to be reusable across research domains. The core loop handles questions,
 evidence, delegation, execution and synthesis; a domain supplies the experiment-specific contract,
 such as its data, evaluator, replication policy and resource requirements. The attention domain is
-the example we tested end to end, so the findings later in this document should not be read as
-evidence that every other domain has already been validated.
+the primary example used in the setup below; the strategy-generalization direction is a second,
+local-only run described later.
 
 ### Prerequisites
 
@@ -341,12 +341,13 @@ npx tsx src/cli.ts research watch start             # literature intake
 npx tsx src/cli.ts research dashboard start --port 7331
 ```
 
-The example above uses the included attention domain, which is also the domain used for the findings
-described later in this document. To investigate another domain, provide its own domain contract
-and adjust the direction brief, topic, data and environment accordingly. The core loop is intended
-to be reusable across domains, but each domain still needs an evaluator and replication policy that
-are appropriate to its claims; loading a domain file is not by itself evidence that the domain has
-been scientifically validated.
+The example above uses the included attention domain, which is also the domain behind the published
+Cloud Run record. The strategy-generalization direction is a second domain run locally on the DGX
+Spark and is not published to Firestore. To investigate another domain, provide its own domain
+contract and adjust the direction brief, topic, data and environment accordingly. The core loop is
+intended to be reusable across domains, but each domain still needs an evaluator and replication
+policy appropriate to its claims; loading a domain file is not by itself evidence that the domain
+has been scientifically validated.
 
 Open http://127.0.0.1:7331. Useful controls:
 

@@ -9,12 +9,14 @@ consoles moving while you speak; each section says what to show and what the vie
 
 **Before recording**
 
-- Run `research publish --project $PROJECT` first: the mirror only updates while a supervisor is
-  running, so a stopped pipeline leaves it stale.
+- Run `research publish --project $PROJECT` for the attention direction first: the mirror only
+  updates while a supervisor is running, so a stopped pipeline leaves it stale.
 - Supervisor, watcher and dashboard running; a direction active with work in flight.
 - Local dashboard open at `http://127.0.0.1:7331`, the **Execution** view selected.
 - The finance direction's dashboard forwarded from the second machine:
   `ssh -i ~/.ssh/<key> -N -L 7332:127.0.0.1:7332 <user>@<host>`, then `http://127.0.0.1:7332`.
+- Keep the finance direction local-only. Show it through the forwarded dashboard; do not publish it
+  to Firestore or include it in the Cloud Run mirror.
 - The public mirror open in a second tab: `https://research-mirror-qdqttyl3jq-uc.a.run.app`.
 - A third tab on the Cloud Run service page for `research-mirror`, and a fourth on the Firestore
   data browser showing `directions/resource-adaptive-inference`.
@@ -94,7 +96,7 @@ Move through the dashboard, narrating what is on screen. Do not describe feature
 > And here the orchestrator paused the direction itself, judging nothing worth doing yet. It then
 > sat at zero cost until new evidence arrived. Not a timer — evidence.
 
-**A second domain, on a second machine** (~20s)
+**A second domain, on a second machine (local-only)** (~20s)
 > This is the same runtime on a DGX Spark, studying something completely different: when a trading
 > strategy found in historical data keeps its edge outside the window it was found in. Its first
 > experiment swept search intensity from one to five thousand strategy variants.
@@ -107,7 +109,8 @@ Move through the dashboard, narrating what is on screen. Do not describe feature
 > A decade of later data — 2016 to 2026 — sits outside that machine entirely. The agent has never
 > seen it.
 
-*On screen:* the finance dashboard, then the search-intensity table.
+*On screen:* the forwarded local finance dashboard, then the search-intensity table. Do not switch
+to the public mirror for this portion.
 
 ---
 
@@ -128,7 +131,7 @@ This is the required proof beat. Show, do not assert.
 *On screen:* Cloud Run → `research-mirror` → Revisions and Metrics.
 
 **Firestore** (~20s)
-> And the record behind it lives in Firestore — one document per finding, run and trace chunk,
+> And the attention record behind it lives in Firestore — one document per finding, run and trace chunk,
 > written by the supervisor as the research proceeds. The agents themselves are Gemini 3.7 Flash
 > through Genkit, with usage metered per model call.
 
