@@ -106,6 +106,12 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .idchip.src::before{background:var(--violet)}
 .idchip.out::before{background:var(--info)}
 .idchip.syn::before{background:var(--warn)}
+/* An evidence chip opens the study it came from, so it is a pointer, not a hint. */
+.idchip[data-outcome]{cursor:pointer}
+.idchip[data-outcome]:hover{border-color:var(--accent);color:var(--text-1)}
+.idchip.refuted::before{background:var(--bad)}
+.idchip.bounded::before,.idchip.inconclusive::before{background:var(--warn)}
+.idchip.supported::before{background:var(--good,#5fbf88)}
 
 .finding{border:1px solid var(--line);border-radius:var(--r2);background:var(--surface-2);margin-bottom:var(--s5)}
 .finding>.head{padding:14px var(--s5);border-bottom:1px solid var(--line);display:flex;gap:var(--s3);align-items:baseline;flex-wrap:wrap}
@@ -577,10 +583,23 @@ function understanding(){
         <div class="provenance"><span class="t-micro">spans</span>${
           spans.map(x=>`<span class="idchip comp">${esc(x)}</span>`).join('')||'<span class="t-meta">direction level</span>'}</div>
         <div class="provenance"><span class="t-micro">evidence</span>
-          ${arr(s.outcomeIds).map(x=>`<span class="idchip out" title="${esc(x)}">finding</span>`).join('')
+          ${arr(s.outcomeIds).map(id=>{
+            // Every cited outcome used to render as the word "finding", so nine
+            // of them read as nine identical chips with the identifier hidden in
+            // a tooltip. Each now names the study it came from and opens it.
+            const o=arr(S.outcomes).find(y=>y.outcome_id===id);
+            const t=o&&arr(S.tasks).find(y=>y.task_id===o.task_id);
+            const label=t?String(t.brief_md).split(/\r?\n/)[0].replace(/^#+\s*/,'').replace(/^Task:\s*/i,''):id;
+            return `<span class="idchip out ${o?esc(o.verdict):''}" data-outcome="${esc(id)}"
+              title="${esc(id)}${o?' · '+esc(o.verdict):''}">${o?esc(o.verdict)+' · ':''}${esc(label.slice(0,44))}</span>`}).join('')
             ||'<span class="missing t-meta">no outcomes cited</span>'}
           ${arr(s.sourceIds).map(id=>{const src=arr(S.sources).find(y=>y.source_id===id);
-            return `<a class="idchip src" href="${esc((src&&src.canonical_url)||'#')}" target="_blank" rel="noreferrer" title="${esc(id)}">${esc(String((src&&src.title)||id).slice(0,38))}</a>`}).join('')
+            const label=esc(String((src&&src.title)||id).slice(0,38));
+            // A chip with no URL was still an anchor, so it looked clickable and
+            // went nowhere.
+            return src&&src.canonical_url
+              ? `<a class="idchip src" href="${esc(src.canonical_url)}" target="_blank" rel="noreferrer" title="${esc(id)}">${label}</a>`
+              : `<span class="idchip src" title="${esc(id)} · no link recorded">${label}</span>`}).join('')
             ||'<span class="missing t-meta">no sources cited</span>'}</div>
         ${s.review?`<div class="t-meta" style="margin-top:12px">human review: ${esc(s.review.note_md)}</div>`:''}
       </div>
@@ -588,6 +607,9 @@ function understanding(){
         <span class="t-small" style="color:var(--text-3)">Tentative: a revision stands until better evidence supersedes it.</span></div>
     </article>`}).join('');
   syn.forEach(s=>prose(host.querySelector('[data-md="'+s.synthesis_id+'"]'),stripLeadingHeading(s.body_md)));
+  host.querySelectorAll('[data-outcome]').forEach(el=>el.onclick=e=>{e.stopPropagation();
+    const o=arr(S.outcomes).find(x=>x.outcome_id===el.dataset.outcome);
+    if(!o)return; task=o.task_id; filePreview=null; view='task'; invalidate('detail'); paint()});
 }
 
 /* --- components: a graph of threads, and what each connection claims --- */
@@ -910,9 +932,16 @@ function traceView(l){
   $('#tracebar').innerHTML=['all','tools','reasoning','compaction','output','errors']
     .map(f=>`<button class="chip ${traceFilter===f?'active':''}" data-filter="${f}">${f}</button>`).join('')
     +`<input type="search" id="tq" placeholder="search trace" value="${esc(traceQuery)}">`
-    +`<button class="chip ${follow?'on':''}" id="followbtn">${follow?'following':'follow off'}</button>`;
+    // Following means "keep the newest step in view as it arrives", which a
+    // published record cannot do: its trace is a finished snapshot. Offering the
+    // control there is offering a button that cannot work.
+    +(S&&S.published?'':`<button class="chip ${follow?'on':''}" id="followbtn">${follow?'following':'follow off'}</button>`);
   $('#tracebar').querySelectorAll('[data-filter]').forEach(el=>el.onclick=()=>{traceFilter=el.dataset.filter;traceView(l)});
-  $('#tracebar').querySelector('#followbtn').onclick=()=>{follow=!follow;traceView(l)};
+  const followBtn=$('#tracebar').querySelector('#followbtn');
+  // Turning following on used to change a flag and nothing else: the scroll only
+  // moved if you were already at the bottom, so the click looked broken.
+  if(followBtn)followBtn.onclick=()=>{follow=!follow;traceView(l);
+    if(follow){const h=$('#trace');h.scrollTop=h.scrollHeight}};
   const q=$('#tracebar').querySelector('#tq');
   q.oninput=()=>{traceQuery=q.value.toLowerCase();traceView(l);
     const again=$('#tracebar').querySelector('#tq');if(again){again.focus();again.setSelectionRange(again.value.length,again.value.length)}};

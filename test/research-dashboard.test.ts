@@ -156,3 +156,27 @@ test("a relationship label states the claim, not the identifiers", () => {
   // A relationship with nothing but bookkeeping still yields a label.
   assert.equal(relationClaim("`COMP-a1b2c3` relates to `COMP-d4e5f6`."), "relationship recorded");
 });
+
+test("the published mirror offers no control it cannot honour", () => {
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  const bar = html.slice(html.indexOf("function traceView"), html.indexOf("host.scrollTop="));
+  // Following keeps the newest step in view as it arrives. A published trace is
+  // a finished snapshot, so the button could never do anything there.
+  assert.match(bar, /S&&S\.published\?''/);
+  // And turning it on scrolls immediately rather than only setting a flag.
+  assert.match(bar, /follow\)\{const h=\$\('#trace'\);h\.scrollTop=h\.scrollHeight\}/);
+});
+
+test("cited evidence names the study and opens it", () => {
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  const understanding = html.slice(html.indexOf('<span class="t-micro">evidence</span>'),
+    html.indexOf("no sources cited"));
+  // Every cited outcome rendered as the literal word "finding", so nine of them
+  // were nine identical chips with the identifier hidden in a tooltip.
+  assert.doesNotMatch(understanding, />finding</);
+  assert.match(understanding, /data-outcome=/);
+  // A source with no recorded URL is not an anchor: it looked clickable and went
+  // nowhere.
+  assert.match(understanding, /src&&src\.canonical_url/);
+  assert.match(understanding, /no link recorded/);
+});
