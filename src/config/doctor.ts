@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { geminiApiKey, vertexApiKey } from "./env-file.js";
 import type { RuntimeConfig } from "./runtime.js";
 import { openRouterCredentialSource } from "./openrouter-auth.js";
+import { resolveContextManagementPolicy } from "../worker/context-management.js";
 
 export interface DoctorCheck { name: string; ok: boolean; detail: string }
 
@@ -55,6 +56,14 @@ export function runtimeDoctor(config: RuntimeConfig, env = process.env): DoctorC
     ] as const) {
       checks.push({ name, ok: Boolean(env[key]), detail: env[key] ?? `set ${key}` });
     }
+  }
+  try {
+    const context = resolveContextManagementPolicy(undefined, env);
+    checks.push({ name: "Context compaction", ok: true,
+      detail: context.mode === "off" ? "disabled"
+        : `after ${context.maxModelTurnsPerEpoch} turns or ${Math.round(context.compactAtRatio * 100)}% of ${context.contextWindowTokens.toLocaleString()} tokens` });
+  } catch (error) {
+    checks.push({ name: "Context compaction", ok: false, detail: String(error) });
   }
   return checks;
 }

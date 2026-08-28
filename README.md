@@ -194,6 +194,9 @@ record.
   rediscovering the machine.
 - **Attempt continuity** — a task keeps one git worktree across attempts. A provider error or an
   operator restart resumes into the work already on disk instead of discarding it.
+- **Long-run context continuity** — Genkit tool loops are divided into auditable epochs after 24
+  model turns or 60% of the model window. The same model writes a free-form Markdown checkpoint,
+  complete message history stays local, and later epochs can retrieve exact archived details.
 - **Full execution observability** — a piano roll showing where wall-clock time actually went
   (reasoning, each tool call, model wait, errors) and a searchable live agent trace.
 - **Honest cost accounting** — usage is metered per model call across the whole tool loop, with
@@ -206,7 +209,7 @@ record.
 | Layer | Choice |
 |---|---|
 | Model | **Gemini 3.7 Flash** via **Vertex AI** |
-| Agent framework | **Genkit** (`genkit`, `@genkit-ai/google-genai`) — tools, streaming, model middleware |
+| Agent framework | **Genkit** (`genkit`, `@genkit-ai/google-genai`, `@genkit-ai/compat-oai`) — streaming, registered tools, manual SDK tool resolution, serializable message history, and model middleware |
 | Cloud infrastructure | **Firestore** (published record), **Cloud Run** (public mirror), Cloud Build, Artifact Registry |
 | Runtime | Node.js 22, TypeScript, better-sqlite3, git worktrees |
 | Experiments | Python 3.10, PyTorch 2.5 + CUDA 12.1, Hugging Face Transformers |
@@ -528,6 +531,9 @@ already in the literature remains an open question about scale.
 - **Cost accounting has to cover the whole interaction.** Recording only the final model call
   undercounted input tokens **20×** and output **90×**, because a tool loop resends the conversation
   each turn and reasoning tokens arrive in a separate field.
+- **Long tool loops need explicit context epochs.** CURI uses Genkit's `returnToolRequests`,
+  serializable `response.messages`, and registered tool actions to checkpoint a long run without
+  replacing Genkit or forcing scientific state through a JSON grammar.
 - **Interruption is part of normal operation.** Provider errors, operator stops and preemption all
   happen. An interrupted attempt should be resumed rather than discarded, without charging it
   against the attempt budget.

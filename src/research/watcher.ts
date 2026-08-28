@@ -242,6 +242,10 @@ export async function readNextResearchSources(store: ResearchStore, projectRoot:
       inputTokens: worker.usage.inputTokens, outputTokens: worker.usage.outputTokens, costUsd: worker.usage.costUsd });
     if (!worker.ok) {
       if (worker.failure === "STOP_REQUESTED") break;
+      if (worker.failure === "CONTEXT_COMPACTION_FAILED") {
+        result.deferred = true;
+        break;
+      }
       if (rateLimited) {
         result.deferred = true;
         result.backoffUntil = updateCursor(store, directionId, reviewProvider, reviewQuery, worker.failure);

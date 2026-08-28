@@ -217,6 +217,11 @@ export async function runResearchLoop(input: {
           directionId: input.directionId, model: input.model });
         if (executed && !executed.result.ok) {
           if (executed.result.failure === "STOP_REQUESTED") return { turns, stopped: "now: operator requested" };
+          if (executed.result.failure === "CONTEXT_COMPACTION_FAILED") {
+            if (!await cancellableDelay(input.projectRoot, 1_000))
+              return { turns, stopped: "now: operator requested" };
+            continue;
+          }
           consecutiveProviderFailures++;
           const rate = Boolean(executed.result.failure?.startsWith("PROVIDER_RATE_LIMITED"));
           if (!await cancellableDelay(input.projectRoot, providerDelay(consecutiveProviderFailures, rate))) {
@@ -232,6 +237,11 @@ export async function runResearchLoop(input: {
       turns++;
       if (!turn.result.ok) {
         if (turn.result.failure === "STOP_REQUESTED") return { turns, stopped: "now: operator requested" };
+        if (turn.result.failure === "CONTEXT_COMPACTION_FAILED") {
+          if (!await cancellableDelay(input.projectRoot, 1_000))
+            return { turns, stopped: "now: operator requested" };
+          continue;
+        }
         consecutiveProviderFailures++;
         const rate = Boolean(turn.result.failure?.startsWith("PROVIDER_RATE_LIMITED"));
         if (!await cancellableDelay(input.projectRoot, providerDelay(consecutiveProviderFailures, rate))) {

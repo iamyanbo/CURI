@@ -97,6 +97,15 @@ test("piano roll segments separate tool time, reasoning, and time waiting on the
   assert.equal(breakdown.toolCalls, 2);
 });
 
+test("context compaction is visible as its own execution interval", () => {
+  const segments = traceSegments([
+    { seq: 0, kind: "compaction", atMs: 2_000, content: "epoch 1" },
+    { seq: 1, kind: "text", atMs: 3_000, content: "continued" },
+  ], 3_000);
+  assert.equal(segments[0]?.kind, "compaction");
+  assert.equal(traceBreakdown(segments, 3_000).compaction, 2_000);
+});
+
 test("a tool call still open at the end is drawn as running, not dropped", () => {
   const segments = traceSegments([{ seq: 0, kind: "tool_call", toolName: "run", toolCallId: "a", atMs: 500 }], 90_000);
   assert.equal(segments.length, 2);

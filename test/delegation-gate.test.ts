@@ -159,6 +159,7 @@ test("an interrupted run informs the resume context but is not charged as an att
     { run_id: "RUN-fail", state: "failed", failure: "PROVIDER_ERROR:transport", output_md: "died mid-write", started_at: "1" },
     { run_id: "RUN-stop", state: "cancelled", failure: "STOP_REQUESTED", output_md: "", started_at: "2" },
     { run_id: "RUN-lost", state: "failed", failure: "PROCESS_LOST_ON_RESTART", output_md: "", started_at: "3" },
+    { run_id: "RUN-compact", state: "failed", failure: "CONTEXT_COMPACTION_FAILED", output_md: "", started_at: "4" },
   ];
   // Only a genuine failure spends the budget; operator stops and lost processes
   // must not retire a task that was never actually tried three times.
@@ -170,7 +171,8 @@ test("an interrupted run informs the resume context but is not charged as an att
   // the shared worktree, so the next attempt has to be told they exist.
   const context = resumeContext("nonexistent-worktree", runs, charged.length + 1);
   assert.match(context, /Resumed attempt 2 of 3/);
-  for (const label of ["Earlier run 1", "Earlier run 2", "Earlier run 3"]) assert.match(context, new RegExp(label));
+  for (const label of ["Earlier run 1", "Earlier run 2", "Earlier run 3", "Earlier run 4"])
+    assert.match(context, new RegExp(label));
   assert.match(context, /interrupted by the operator or the runtime/);
   assert.equal(resumeContext("nonexistent-worktree", [], 1), "");
 });

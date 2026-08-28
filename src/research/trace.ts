@@ -13,7 +13,7 @@ import { join, relative, resolve, sep } from "node:path";
 const TRACE_WINDOW = 600;
 
 export interface TraceSegment {
-  kind: "thinking" | "tool" | "model";
+  kind: "thinking" | "tool" | "model" | "compaction";
   label: string;
   startMs: number;
   endMs: number;
@@ -88,12 +88,12 @@ export function traceSegments(steps: Array<Record<string, unknown>>, runEndMs: n
       previousEventAt = Math.max(previousEventAt, at);
       continue;
     }
-    if (kind === "thinking" || kind === "text") {
+    if (kind === "thinking" || kind === "text" || kind === "compaction") {
       // A reasoning or message step is recorded when it completes; the interval
       // it closes started at the previous recorded event.
       segments.push({
-        kind: kind === "thinking" ? "thinking" : "model",
-        label: kind === "thinking" ? "reasoning" : "model output",
+        kind: kind === "thinking" ? "thinking" : kind === "compaction" ? "compaction" : "model",
+        label: kind === "thinking" ? "reasoning" : kind === "compaction" ? "context compaction" : "model output",
         startMs: Math.min(previousEventAt, at), endMs: at, isError: false, seq: Number(step.seq ?? 0),
       });
       previousEventAt = Math.max(previousEventAt, at);
@@ -115,7 +115,7 @@ export function traceSegments(steps: Array<Record<string, unknown>>, runEndMs: n
 /** Wall-clock totals by activity, including time no activity accounts for. */
 export function traceBreakdown(segments: TraceSegment[], totalMs: number): Record<string, number> {
   const covered: Array<[number, number]> = [];
-  const totals: Record<string, number> = { thinking: 0, tool: 0, model: 0, waiting: 0, errorMs: 0, errors: 0, toolCalls: 0 };
+  const totals: Record<string, number> = { thinking: 0, tool: 0, model: 0, compaction: 0, waiting: 0, errorMs: 0, errors: 0, toolCalls: 0 };
   for (const segment of segments) {
     const span = Math.max(0, segment.endMs - segment.startMs);
     totals[segment.kind] = (totals[segment.kind] ?? 0) + span;

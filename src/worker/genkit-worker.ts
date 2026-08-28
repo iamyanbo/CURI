@@ -22,8 +22,12 @@ import { searchPublicWeb } from "./web-search.js";
 import { GlobalMemoryStore } from "../memory/store.js";
 import { searchCampaignMemory } from "../memory/campaign-memory.js";
 import { Store } from "../store/store.js";
+import {
+  archiveContextEpoch, baseContextFits, checkpointInstruction, contextTrigger, continuationPrompt,
+  estimateContextTokens, latestCheckpointFromAttempt, resolveContextManagementPolicy, searchAttemptHistory, validCheckpoint,
+} from "./context-management.js";
 import type {
-  AgentWorker, MarkdownAction, TraceStep, WorkerCheck, WorkerRequest, WorkerResult, WorkerUsage,
+  AgentWorker, ContextCompaction, MarkdownAction, TraceStep, WorkerCheck, WorkerRequest, WorkerResult, WorkerUsage,
 } from "./types.js";
 
 /**
@@ -97,6 +101,12 @@ const MAX_FILE_BYTES = 2_000_000;
 const SKIP_DIRS = new Set([".git", "node_modules", ".autoresearch-protected"]);
 /** Executables that drop into an interactive REPL when invoked with no arguments. */
 const INTERPRETERS = new Set(["python", "python3", "py", "node"]);
+
+class ContextManagementError extends Error {
+  constructor(readonly code: "CONTEXT_BASE_TOO_LARGE" | "CONTEXT_COMPACTION_FAILED", detail: string) {
+    super(detail); this.name = "ContextManagementError";
+  }
+}
 
 const DENIED_EXECUTABLES = new Set([
   "bash", "sh", "zsh", "fish", "cmd", "powershell", "pwsh", "wsl",
@@ -607,6 +617,7 @@ function makeTools(
 ) {
   const wanted = new Set(request.tools);
   const tools: any[] = [];
+  const toolsByName = new Map<string, any>();
   let structuredSubmission: unknown;
   const markdownActions: MarkdownAction[] = [];
   const checks: WorkerCheck[] = [];
@@ -643,8 +654,21 @@ function makeTools(
   };
   const add = (name: string, description: string, inputSchema: any, outputSchema: any, fn: any) => {
     if (!wanted.has(name)) return;
-    tools.push(ai.dynamicTool({ name, description, inputSchema, outputSchema }, wrap(name, fn, outputSchema)));
+    const tool = ai.defineTool({ name, description, inputSchema, outputSchema }, wrap(name, fn, outputSchema));
+    tools.push(tool); toolsByName.set(name, tool);
   };
+
+  // Context history is an internal, local-only source. It becomes useful after
+  // the first epoch is archived, but is exposed from the beginning so the tool
+  // surface stays stable across a compacted conversation.
+  const historyTool = ai.defineTool({
+    name: "search_attempt_history",
+    description: "Search exact text from earlier compacted epochs of this same local attempt. Use this when a checkpoint omits a number, command, error, or decision.",
+    inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(30).default(12) }),
+    outputSchema: z.string(),
+  }, wrap("search_attempt_history", ({ query, limit }: { query: string; limit: number }) =>
+    searchAttemptHistory(request.attemptDir, query, limit), z.string()));
+  tools.push(historyTool); toolsByName.set("search_attempt_history", historyTool);
 
   for (const action of request.markdownActions ?? []) {
     add(action.name, action.description,
@@ -793,6 +817,7 @@ function makeTools(
     });
   return {
     tools,
+    toolsByName,
     structuredSubmission: () => structuredSubmission,
     markdownActions: () => markdownActions.map((item) => ({ ...item })),
     checks: () => checks.map((item) => ({ ...item, args: [...item.args], result: { ...item.result } })),
@@ -850,9 +875,14 @@ export class GenkitWorker implements AgentWorker {
     // undercounted a 28-tool-call executor turn roughly twentyfold. A model
     // middleware sees every call in the loop, so usage is summed there instead.
     const billed = { requests: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0, totalTokens: 0 };
+    const turnUsages: Array<{ inputTokens: number; outputTokens: number; reasoningTokens: number; totalTokens: number }> = [];
     const meterUsage = async (modelRequest: unknown, next: (request: unknown) => Promise<unknown>) => {
       const modelResponse = await next(modelRequest);
       const turn = (modelResponse as { usage?: Record<string, unknown> } | undefined)?.usage ?? {};
+      turnUsages.push({
+        inputTokens: Number(turn.inputTokens ?? 0), outputTokens: Number(turn.outputTokens ?? 0),
+        reasoningTokens: Number(turn.thoughtsTokens ?? 0), totalTokens: Number(turn.totalTokens ?? 0),
+      });
       billed.requests++;
       billed.inputTokens += Number(turn.inputTokens ?? 0);
       billed.outputTokens += Number(turn.outputTokens ?? 0);
@@ -883,6 +913,9 @@ export class GenkitWorker implements AgentWorker {
     let stderrTail = "";
     let timedOut = false;
     const usage: WorkerUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 };
+    const policy = resolveContextManagementPolicy(request.contextManagement);
+    const compactions: ContextCompaction[] = [];
+    let latestCheckpoint = "";
 
     try {
       heartbeat.activity("model_wait", `waiting for ${provider}/${modelName}`, { kind: "model", name: modelName });
@@ -905,18 +938,22 @@ export class GenkitWorker implements AgentWorker {
       // request-level options.
       const googleNative = !openAiCompatible;
       const nativeStructuredOutput = Boolean(request.structuredOutput && !openAiCompatible);
-      const streamOnce = async (prompt: string) => {
+      const streamOnce = async (options: {
+        prompt?: string; messages?: any[]; system?: string; tools?: any[];
+        maxOutputTokens?: number; structured?: boolean;
+      }) => {
         const generation = ai.generateStream({
           model,
-          system: request.systemPrompt,
-          prompt,
-          tools,
-          // Genkit defaults to five tool turns when omitted. Use a practically
-          // unbounded value; liveness is governed by positive progress evidence.
-          maxTurns: Number.MAX_SAFE_INTEGER,
+          system: options.system ?? request.systemPrompt,
+          ...(options.messages ? { messages: options.messages } : { prompt: options.prompt ?? request.prompt }),
+          tools: options.tools ?? tools,
+          // Manual resolution is what gives CURI an SDK-native boundary where
+          // completed history can be archived and replaced with a checkpoint.
+          returnToolRequests: true,
           abortSignal: controller.signal,
           config: {
-            maxOutputTokens: request.maxOutputTokens ?? (request.role === "manager" ? 16_384 : 65_536),
+            maxOutputTokens: options.maxOutputTokens
+              ?? request.maxOutputTokens ?? (request.role === "manager" ? 16_384 : 65_536),
             // Grounding and thought-inclusion are Google-surface options. The
             // test was "not OpenRouter", which quietly included a self-hosted
             // OpenAI-compatible endpoint and sent Google-only fields to vLLM.
@@ -926,7 +963,8 @@ export class GenkitWorker implements AgentWorker {
             // why the trace showed tool calls but never any reasoning.
             ...(googleNative ? { thinkingConfig: { includeThoughts: true } } : {}),
           },
-          output: nativeStructuredOutput ? { schema: outputSchema(request.structuredOutput) } : undefined,
+          output: options.structured !== false && nativeStructuredOutput
+            ? { schema: outputSchema(request.structuredOutput) } : undefined,
           use: [meterUsage],
         } as any);
         for await (const chunk of generation.stream) {
@@ -935,32 +973,98 @@ export class GenkitWorker implements AgentWorker {
         }
         return await generation.response;
       };
-      // A tool call the transport could not decode kills the streamed turn, and
-      // used to discard the whole attempt with it — in one case 36 minutes and
-      // 58 completed tool calls. The work those calls did is already on disk, so
-      // the turn is restarted in place with the offending pattern named, instead
-      // of the attempt being thrown away.
-      let response: Awaited<ReturnType<typeof streamOnce>> | undefined;
-      let prompt = request.prompt;
-      for (let attempt = 0; attempt <= MALFORMED_TOOL_CALL_RETRIES; attempt++) {
-        try { response = await streamOnce(prompt); break; }
-        catch (error) {
-          const detail = providerErrorDetail(error);
-          const recoverable = isMalformedToolCall(detail) && !controller.signal.aborted
-            && attempt < MALFORMED_TOOL_CALL_RETRIES;
-          if (!recoverable) throw error;
-          push("tool_result", `Transport could not decode a tool call and the turn was restarted: ${truncate(detail, 400)}`,
-            { isError: true, toolName: "transport" });
-          heartbeat.activity("model_wait", "restarting turn after an undecodable tool call", { kind: "model", name: modelName });
-          prompt = `${request.prompt}\n\n## Interrupted turn\nA previous turn ended because a tool call could not be decoded`
-            + " by the transport, which encodes tool arguments as JSON. Any work already completed is still present in the"
-            + " workspace, so re-read it before repeating anything. Avoid putting literal Windows paths or backslash escapes"
-            + " inside tool arguments: use forward slashes and workspace-relative paths, and if a value genuinely needs"
-            + " backslashes, write it from a script file rather than embedding it in a tool argument.";
+      const callWithRetry = async (initial: Parameters<typeof streamOnce>[0]) => {
+        let options = initial;
+        for (let attempt = 0; ; attempt++) {
+          try { return await streamOnce(options); }
+          catch (error) {
+            const detail = providerErrorDetail(error);
+            const recoverable = isMalformedToolCall(detail) && !controller.signal.aborted
+              && attempt < MALFORMED_TOOL_CALL_RETRIES;
+            if (!recoverable) throw error;
+            push("tool_result", `Transport could not decode a tool call; retrying this Genkit turn: ${truncate(detail, 400)}`,
+              { isError: true, toolName: "transport" });
+            heartbeat.activity("model_wait", "retrying after an undecodable tool call", { kind: "model", name: modelName });
+            const warning = "A previous response could not be decoded because tool arguments were invalid JSON. Use forward-slash,"
+              + " workspace-relative paths and avoid literal backslash escapes in tool arguments.";
+            options = options.messages
+              ? { ...options, messages: [...options.messages, { role: "user", content: [{ text: warning }] }] }
+              : { ...options, prompt: `${options.prompt ?? request.prompt}\n\n## Transport retry\n${warning}` };
+          }
         }
+      };
+
+      const normalMaxOutput = request.maxOutputTokens ?? (request.role === "manager" ? 16_384 : 65_536);
+      if (!baseContextFits(policy, [request.systemPrompt ?? "", request.prompt], normalMaxOutput)) {
+        throw new ContextManagementError("CONTEXT_BASE_TOO_LARGE",
+          `initial context estimate ${estimateContextTokens([request.systemPrompt ?? "", request.prompt])} cannot fit in ${policy.contextWindowTokens}`);
+      }
+
+      let response: Awaited<ReturnType<typeof streamOnce>> | undefined;
+      let messages: any[] | undefined;
+      let epoch = 1;
+      let epochTurns = 0;
+      while (true) {
+        heartbeat.activity("model_wait", `waiting for ${provider}/${modelName} epoch ${epoch}`, { kind: "model", name: modelName });
+        response = await callWithRetry(messages ? { messages } : { prompt: request.prompt });
+        epochTurns++;
+        const toolRequests = response.toolRequests ?? [];
+        if (toolRequests.length === 0) break;
+
+        messages = response.messages as any[];
+        const toolResponses = await Promise.all(toolRequests.map(async (part: any) => {
+          const name = String(part?.toolRequest?.name ?? "");
+          const tool = toolState.toolsByName.get(name);
+          if (!tool) return { toolResponse: { name, ref: part?.toolRequest?.ref, output: `unknown tool: ${name}` } };
+          try {
+            const output = await tool(part.toolRequest.input);
+            return tool.respond(part, output);
+          } catch (error) {
+            return tool.respond(part, `${name} failed: ${String(error)}`);
+          }
+        }));
+        messages = [...messages, { role: "tool", content: toolResponses }];
+
+        const lastUsage = turnUsages[turnUsages.length - 1] ?? { inputTokens: 0, outputTokens: 0 };
+        const trigger = contextTrigger({ policy, epochTurns, messages,
+          lastInputTokens: lastUsage.inputTokens, lastOutputTokens: lastUsage.outputTokens });
+        if (!trigger) continue;
+
+        heartbeat.activity("model_wait", `compacting context epoch ${epoch}`, { kind: "model", name: modelName });
+        let checkpointResponse: Awaited<ReturnType<typeof streamOnce>> | undefined;
+        let checkpoint = "";
+        for (let checkpointAttempt = 0; checkpointAttempt < 2; checkpointAttempt++) {
+          checkpointResponse = await callWithRetry({
+            messages: [...messages, { role: "user", content: [{ text: checkpointInstruction(epoch, checkpointAttempt > 0) }] }],
+            system: `${request.systemPrompt ?? ""}\n\nYou are temporarily writing a loss-minimizing context checkpoint for CURI.`,
+            tools: [], maxOutputTokens: policy.checkpointMaxOutputTokens, structured: false,
+          });
+          checkpoint = String(checkpointResponse.text ?? "").trim();
+          if (validCheckpoint(checkpoint, checkpointResponse.finishReason)) break;
+        }
+        if (!checkpointResponse || !validCheckpoint(checkpoint, checkpointResponse.finishReason)) {
+          throw new ContextManagementError("CONTEXT_COMPACTION_FAILED",
+            `epoch ${epoch} did not produce a complete Markdown checkpoint after two Genkit calls`);
+        }
+        latestCheckpoint = checkpoint;
+        const nextPrompt = continuationPrompt({
+          originalPrompt: request.prompt, checkpoint, epoch, trace,
+          actions: toolState.markdownActions(), checks: toolState.checks(), recentSteps: policy.recentTraceSteps,
+        });
+        const record: ContextCompaction = {
+          epoch, atMs: Date.now() - started, trigger: trigger.trigger,
+          inputTokensBefore: trigger.projectedTokens,
+          estimatedTokensAfter: estimateContextTokens([request.systemPrompt ?? "", nextPrompt]),
+          checkpointFile: `context-epochs/epoch-${String(epoch).padStart(4, "0")}.checkpoint.md`,
+        };
+        archiveContextEpoch({ attemptDir: request.attemptDir, epoch, messages, checkpoint, record });
+        compactions.push(record);
+        push("compaction", `epoch ${epoch} (${trigger.trigger}): ${record.inputTokensBefore} estimated tokens -> ${record.estimatedTokensAfter}; ${record.checkpointFile}`);
+        heartbeat.progress("checkpoint", `context epoch ${epoch} compacted`, null);
+        messages = [{ role: "user", content: [{ text: nextPrompt }] }];
+        epoch++; epochTurns = 0;
       }
       if (!response) throw new Error("model turn produced no response");
-      if (response.reasoning) push("thinking", response.reasoning);
       const submitted = toolState.structuredSubmission();
       finalText = submitted !== undefined
         ? JSON.stringify(submitted)
@@ -981,6 +1085,8 @@ export class GenkitWorker implements AgentWorker {
         ? "STOP_REQUESTED"
         : timedOut
         ? "PROCESS_TIMEOUT"
+        : error instanceof ContextManagementError
+        ? error.code
         : providerFailureFromText(stderrTail) ?? `PROVIDER_ERROR:${stderrTail}`;
       heartbeat.fail(failure);
     } finally {
@@ -1016,6 +1122,8 @@ export class GenkitWorker implements AgentWorker {
       trace,
       actions: toolState.markdownActions(),
       checks: toolState.checks(),
+      compactions,
+      ...(latestCheckpoint ? { latestCheckpoint } : {}),
       ...(failure ? { failure } : {}),
     };
     writeFileSync(join(request.attemptDir, "completion.json"), JSON.stringify({ ...result, trace: undefined, traceSteps: trace.length }, null, 2), "utf8");
@@ -1029,10 +1137,13 @@ export class GenkitWorker implements AgentWorker {
  */
 class IsolatedGenkitWorker implements AgentWorker {
   async run(request: WorkerRequest): Promise<WorkerResult> {
-    mkdirSync(request.attemptDir, { recursive: true });
-    const requestPath = join(request.attemptDir, "worker-request.json");
-    const resultPath = join(request.attemptDir, "worker-result.json");
-    writeFileSync(requestPath, JSON.stringify(request), "utf8");
+    const effectiveRequest: WorkerRequest = {
+      ...request, contextManagement: resolveContextManagementPolicy(request.contextManagement),
+    };
+    mkdirSync(effectiveRequest.attemptDir, { recursive: true });
+    const requestPath = join(effectiveRequest.attemptDir, "worker-request.json");
+    const resultPath = join(effectiveRequest.attemptDir, "worker-result.json");
+    writeFileSync(requestPath, JSON.stringify(effectiveRequest), "utf8");
     const childEntry = fileURLToPath(new URL("./genkit-child.ts", import.meta.url));
     const started = Date.now();
     let stderrTail = "";
@@ -1040,7 +1151,7 @@ class IsolatedGenkitWorker implements AgentWorker {
     let stopRequested = false;
 
     const child = spawn(process.execPath, ["--import", "tsx", childEntry, requestPath, resultPath], {
-      cwd: request.cwd,
+      cwd: effectiveRequest.cwd,
       shell: false,
       windowsHide: true,
       env: { ...process.env, GENKIT_ENV: "prod" },
@@ -1048,12 +1159,12 @@ class IsolatedGenkitWorker implements AgentWorker {
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => { stderrTail = (stderrTail + chunk).slice(-4_000); });
-    const timer = request.timeoutMs > 0
-      ? setTimeout(() => { timedOut = true; if (child.pid) killProcessTree(child.pid); }, request.timeoutMs + 5_000)
+    const timer = effectiveRequest.timeoutMs > 0
+      ? setTimeout(() => { timedOut = true; if (child.pid) killProcessTree(child.pid); }, effectiveRequest.timeoutMs + 5_000)
       : null;
-    const cancelPoll = request.cancelFile
+    const cancelPoll = effectiveRequest.cancelFile
       ? setInterval(() => {
-          if (request.cancelFile && existsSync(request.cancelFile)) {
+          if (effectiveRequest.cancelFile && existsSync(effectiveRequest.cancelFile)) {
             stopRequested = true;
             if (child.pid) killProcessTree(child.pid);
           }
@@ -1072,10 +1183,12 @@ class IsolatedGenkitWorker implements AgentWorker {
     } catch {
       const failure = stopRequested ? "STOP_REQUESTED" : timedOut ? "PROCESS_TIMEOUT"
         : providerFailureFromText(stderrTail) ?? `PROCESS_EXIT_${exitCode}`;
+      const latestCheckpoint = latestCheckpointFromAttempt(effectiveRequest.attemptDir);
       return {
         ok: false, finalText: "", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, costUsd: 0 },
-        sessionId: null, model: request.model ?? DEFAULT_OPENROUTER_MODEL, provider: null, toolCalls: 0,
+        sessionId: null, model: effectiveRequest.model ?? DEFAULT_OPENROUTER_MODEL, provider: null, toolCalls: 0,
         durationMs: Date.now() - started, exitCode, timedOut, stderrTail, failure, trace: [],
+        ...(latestCheckpoint ? { latestCheckpoint } : {}),
       };
     }
   }

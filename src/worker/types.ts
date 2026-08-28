@@ -1,5 +1,24 @@
 export type WorkerRole = "architect" | "manager" | "executor" | "setup" | "watcher" | "researcher";
 
+export interface ContextManagementPolicy {
+  mode: "auto" | "off";
+  contextWindowTokens: number;
+  compactAtRatio: number;
+  maxModelTurnsPerEpoch: number;
+  checkpointMaxOutputTokens: number;
+  safetyTokens: number;
+  recentTraceSteps: number;
+}
+
+export interface ContextCompaction {
+  epoch: number;
+  atMs: number;
+  trigger: "turns" | "tokens";
+  inputTokensBefore: number;
+  estimatedTokensAfter: number;
+  checkpointFile: string;
+}
+
 export interface WorkerRequest {
   role: WorkerRole;
   prompt: string;
@@ -34,6 +53,8 @@ export interface WorkerRequest {
   markdownActions?: Array<{ name: string; description: string }>;
   /** Accept a completed tool-using turn even when the model emits no final prose. */
   allowEmptyResponse?: boolean;
+  /** Optional resolved override; environment defaults are recorded by the isolated launcher. */
+  contextManagement?: Partial<ContextManagementPolicy>;
 }
 
 export interface MarkdownAction {
@@ -63,7 +84,7 @@ export interface WorkerUsage {
 export interface TraceStep {
   seq: number;
   atMs: number;
-  kind: "thinking" | "text" | "tool_call" | "tool_result";
+  kind: "thinking" | "text" | "tool_call" | "tool_result" | "compaction";
   toolName?: string;
   toolCallId?: string;
   isError?: boolean;
@@ -86,6 +107,8 @@ export interface WorkerResult {
   trace: TraceStep[];
   actions?: MarkdownAction[];
   checks?: WorkerCheck[];
+  compactions?: ContextCompaction[];
+  latestCheckpoint?: string;
 }
 
 export interface AgentWorker {

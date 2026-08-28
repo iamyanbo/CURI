@@ -188,6 +188,7 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .seg.thinking{background:var(--violet)}
 .seg.tool{background:#6f8fd0}
 .seg.model{background:var(--info)}
+.seg.compaction{background:var(--warn)}
 .seg.err{background:var(--bad);top:23px;height:6px}
 .seg.live{background-image:repeating-linear-gradient(45deg,#ffffff30 0 5px,transparent 5px 10px);animation:pulse 2s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
@@ -212,6 +213,7 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .tag.tool_call{border-color:#3d4a7a;color:var(--accent)}
 .tag.tool_result{border-color:#7dd3fc44;color:var(--info)}
 .tag.thinking{border-color:#c4b5fd44;color:var(--violet)}
+.tag.compaction{border-color:#e8b66066;color:var(--warn)}
 .tag.text{border-color:#fbbf2444;color:var(--warn)}
 .tag.err{border-color:#f8717155;color:var(--bad)}
 .step .line{font-size:13px;color:var(--text-2);word-break:break-word}
@@ -286,6 +288,7 @@ details summary{cursor:pointer;font:11px var(--mono);color:var(--text-3);padding
         <div id="rollbar" class="toolbar"></div>
         <div class="legend">
           <span><i style="background:var(--violet)"></i>reasoning</span>
+          <span><i style="background:var(--warn)"></i>compaction</span>
           <span><i style="background:var(--accent)"></i>tool call</span>
           <span><i style="background:var(--info)"></i>model output</span>
           <span><i style="background:var(--bad)"></i>tool error</span>
@@ -832,7 +835,7 @@ function tip(html,ev){const el=$('#tip');if(!html){el.style.display='none';retur
   el.style.left=Math.min(window.innerWidth-370,ev.clientX+14)+'px';el.style.top=(ev.clientY+16)+'px'}
 function rollLane(l,w){
   const span=w.to-w.from,pct=t=>((t-w.from)/span)*100,b=l.breakdown||{},total=Math.max(1,b.total||l.durationMs);
-  const mix=[['thinking','var(--violet)'],['tool','var(--accent)'],['model','var(--info)'],['waiting','#1d2733']]
+  const mix=[['thinking','var(--violet)'],['tool','var(--accent)'],['model','var(--info)'],['compaction','var(--warn)'],['waiting','#1d2733']]
     .map(([k,c])=>`<i style="width:${((b[k]||0)/total*100).toFixed(2)}%;background:${c}"></i>`).join('');
   const segs=arr(l.segments).filter(s=>l.startMs+s.endMs>=w.from&&l.startMs+s.startMs<=w.to).map(s=>{
     const a=l.startMs+s.startMs,z=l.startMs+s.endMs,left=Math.max(0,pct(a)),right=Math.min(100,pct(z));
@@ -897,13 +900,14 @@ function stepMatches(s){
   if(traceFilter==='tools')return s.kind==='tool_call'||s.kind==='tool_result';
   if(traceFilter==='reasoning')return s.kind==='thinking';
   if(traceFilter==='output')return s.kind==='text';
+  if(traceFilter==='compaction')return s.kind==='compaction';
   if(traceFilter==='errors')return Boolean(s.isError);
   return true;
 }
 function scrollToStep(seq){const el=document.querySelector('[data-step="'+seq+'"]');if(el)el.scrollIntoView({block:'center'})}
 function traceView(l){
   const host=$('#trace');
-  $('#tracebar').innerHTML=['all','tools','reasoning','output','errors']
+  $('#tracebar').innerHTML=['all','tools','reasoning','compaction','output','errors']
     .map(f=>`<button class="chip ${traceFilter===f?'active':''}" data-filter="${f}">${f}</button>`).join('')
     +`<input type="search" id="tq" placeholder="search trace" value="${esc(traceQuery)}">`
     +`<button class="chip ${follow?'on':''}" id="followbtn">${follow?'following':'follow off'}</button>`;
@@ -922,6 +926,7 @@ function traceView(l){
       +'<span class="tag thinking">reasoning '+fmt(b.thinking||0)+'</span>'
       +'<span class="tag tool_call">tools '+fmt(b.tool||0)+' · '+(b.toolCalls||0)+'</span>'
       +'<span class="tag tool_result">model '+fmt(b.model||0)+'</span>'
+      +'<span class="tag compaction">compaction '+fmt(b.compaction||0)+'</span>'
       +'<span class="tag">waiting '+fmt(b.waiting||0)+'</span>'
       +(b.errors?'<span class="tag err">'+b.errors+' errors</span>':'')+'</div></div>'
       +'<div class="empty">No trace steps were published for this run.<br>'
@@ -944,6 +949,7 @@ function traceView(l){
     +`<span class="tag thinking">reasoning ${fmt(b.thinking||0)}</span>`
     +`<span class="tag tool_call">tools ${fmt(b.tool||0)} · ${b.toolCalls||0}</span>`
     +`<span class="tag tool_result">model ${fmt(b.model||0)}</span>`
+    +`<span class="tag compaction">compaction ${fmt(b.compaction||0)}</span>`
     +`<span class="tag">waiting ${fmt(b.waiting||0)}</span>`
     +(b.errors?`<span class="tag err">${b.errors} errors</span>`:'')+'</div></div>'
     +(steps.length?steps.map(s=>{

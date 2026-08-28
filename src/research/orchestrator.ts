@@ -6,6 +6,7 @@ import { statePath, stateDirName } from "./paths.js";
 
 import { commitProgramCheckpoint, diffAgainstHead, git, sha256File } from "../core/workspace.js";
 import { runProcess, runWorker } from "../worker/genkit-worker.js";
+import { latestCheckpointFromAttempt } from "../worker/context-management.js";
 import type { MarkdownAction, WorkerResult } from "../worker/types.js";
 import { immediateStopFile } from "./control.js";
 import { checkDelegation, checkSynthesis } from "./delegation.js";
@@ -188,6 +189,7 @@ function runtimeFailureReport(result: WorkerResult): string {
     `- duration: ${Math.round(result.durationMs / 1000)}s`,
     result.stderrTail ? `- provider detail: ${compact(result.stderrTail, 1_000)}` : "",
     evidence ? `\n### Last recorded tool calls\n${evidence}` : "\nNo tool calls were recorded.",
+    result.latestCheckpoint ? `\n### Last valid context checkpoint\n${compact(result.latestCheckpoint, 8_000)}` : "",
     "\nAny files the attempt produced are preserved in the task worktree and captured as artifacts.",
   ].filter(Boolean).join("\n");
 }
@@ -403,7 +405,11 @@ export async function runOrchestratorTurn(input: {
     campaignId: input.directionId, cycleId: "orchestrator", attemptId: runId,
   });
   finishWorkerRun(input.store, runId, result);
-  if (!result.ok) return { runId, taskId: null, paused: false, result };
+  if (!result.ok) {
+    if (result.latestCheckpoint) input.store.saveNote(input.directionId, runId, "runtime",
+      `Orchestrator context was interrupted after a valid local checkpoint. Resume from this state without repeating completed work.\n\n${result.latestCheckpoint}`);
+    return { runId, taskId: null, paused: false, result };
+  }
   const actions = result.actions ?? [];
   if (actions.length === 0) input.store.saveNote(input.directionId, runId, "orchestrator", result.finalText || "No action selected.");
   const applied = applyOrchestratorActions(input.store, input.directionId, runId, actions, input.projectRoot);
@@ -520,12 +526,13 @@ export interface PriorExecutorRun {
   failure: string | null;
   output_md: string | null;
   started_at: string;
+  attempt_dir?: string | null;
 }
 
 /** Every executor run this task has had, in order, whatever became of it. */
 function priorExecutorRuns(store: ResearchStore, taskId: string): PriorExecutorRun[] {
   return store.db.prepare(
-    "SELECT run_id,state,failure,output_md,started_at FROM runs WHERE task_id=? AND role='executor' ORDER BY started_at",
+    "SELECT run_id,state,failure,output_md,started_at,attempt_dir FROM runs WHERE task_id=? AND role='executor' ORDER BY started_at",
   ).all(taskId) as PriorExecutorRun[];
 }
 
@@ -539,7 +546,8 @@ function priorExecutorRuns(store: ResearchStore, taskId: string): PriorExecutorR
  * attempt must be told about it even though it was not charged for it.
  */
 export function budgetedAttempts(runs: PriorExecutorRun[]): PriorExecutorRun[] {
-  return runs.filter((run) => run.state !== "cancelled" && run.failure !== "PROCESS_LOST_ON_RESTART");
+  return runs.filter((run) => run.state !== "cancelled" && run.failure !== "PROCESS_LOST_ON_RESTART"
+    && run.failure !== "CONTEXT_COMPACTION_FAILED");
 }
 
 /**
@@ -559,6 +567,8 @@ export function resumeContext(workspace: string, priors: PriorExecutorRun[], att
       + (interrupted ? " — interrupted by the operator or the runtime, not by the work itself" : "")
       + `\n${compact(String(prior.output_md ?? "No report was recorded."), 4_000)}`;
   }).join("\n\n");
+  const checkpoint = [...priors].reverse().flatMap((prior) => prior.attempt_dir
+    ? [latestCheckpointFromAttempt(prior.attempt_dir)] : []).find(Boolean) ?? null;
   return [
     `## Resumed attempt ${attempt} of ${MAX_EXECUTOR_ATTEMPTS}`,
     "This is the same worktree the earlier attempts used. Their files are still here."
@@ -568,6 +578,7 @@ export function resumeContext(workspace: string, priors: PriorExecutorRun[], att
     + " whether the work itself was on track.",
     `### Files already changed in this worktree\n${changed.map((path) => `- ${path}`).join("\n") || "- none"}`,
     `### Earlier attempts\n${history}`,
+    checkpoint ? `### Last valid local context checkpoint\n${compact(checkpoint, 12_000)}` : "",
     attempt >= MAX_EXECUTOR_ATTEMPTS
       ? "### Final attempt\nThis is the last attempt the runtime will schedule for this task."
         + " Land and report whatever evidence is defensible, then return: partial evidence with an honest"
