@@ -159,9 +159,11 @@ test("a published run carries its trace but not the machine", () => {
 
     const record = buildPublishedRecord(store, "direction", root);
     const run = record.runs[0] as Record<string, any>;
-    assert.equal(run.segments.length, 1);
-    assert.equal(run.segments[0].label, "run");
-    assert.equal(run.segments[0].endMs - run.segments[0].startMs, 3000);
+    assert.equal(run.segments.length, 2);
+    const toolSegment = run.segments.find((segment: Record<string, any>) => segment.kind === "tool");
+    assert.equal(toolSegment.label, "run");
+    assert.equal(toolSegment.endMs - toolSegment.startMs, 3000);
+    assert.equal(run.breakdown.model, 1000);
     assert.equal(run.breakdown.toolCalls, 1);
 
     // The trace is published now, but the machine is not: the home path is
@@ -186,7 +188,7 @@ test("a published run carries its trace but not the machine", () => {
     // And the timeline can be published on its own.
     const timingOnly = buildPublishedRecord(store, "direction", root, { includeTrace: false });
     assert.equal(timingOnly.traceSteps.length, 0);
-    assert.equal((timingOnly.runs[0] as Record<string, any>).segments.length, 1);
+    assert.equal((timingOnly.runs[0] as Record<string, any>).segments.length, 2);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
 

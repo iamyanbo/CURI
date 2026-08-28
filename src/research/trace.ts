@@ -54,11 +54,23 @@ export function traceSegments(steps: Array<Record<string, unknown>>, runEndMs: n
   const ordered = [...steps].sort((left, right) => Number(left.atMs ?? 0) - Number(right.atMs ?? 0));
   const segments: TraceSegment[] = [];
   const openCalls = new Map<string, Record<string, unknown>>();
+  let previousEventAt = 0;
   for (const step of ordered) {
     const kind = String(step.kind ?? "");
     const at = Number(step.atMs ?? 0);
     if (kind === "tool_call") {
+      // A tool call is recorded only after the model has generated it. When a
+      // provider withholds reasoning text, the preceding interval is still a
+      // model response—not idle time. Do not add one between parallel calls
+      // emitted by the same response.
+      if (openCalls.size === 0 && at > previousEventAt) {
+        segments.push({
+          kind: "model", label: "model response", startMs: previousEventAt,
+          endMs: at, isError: false, seq: Number(step.seq ?? 0),
+        });
+      }
       openCalls.set(String(step.toolCallId ?? `${step.toolName}-${step.seq}`), step);
+      previousEventAt = Math.max(previousEventAt, at);
       continue;
     }
     if (kind === "tool_result") {
@@ -73,17 +85,18 @@ export function traceSegments(steps: Array<Record<string, unknown>>, runEndMs: n
           isError: Boolean(step.isError), seq: Number(call.seq ?? 0),
         });
       }
+      previousEventAt = Math.max(previousEventAt, at);
       continue;
     }
     if (kind === "thinking" || kind === "text") {
       // A reasoning or message step is recorded when it completes; the interval
       // it closes started at the previous recorded event.
-      const previous = segments.length ? Math.max(...segments.map((item) => item.endMs)) : 0;
       segments.push({
         kind: kind === "thinking" ? "thinking" : "model",
         label: kind === "thinking" ? "reasoning" : "model output",
-        startMs: Math.min(previous, at), endMs: at, isError: false, seq: Number(step.seq ?? 0),
+        startMs: Math.min(previousEventAt, at), endMs: at, isError: false, seq: Number(step.seq ?? 0),
       });
+      previousEventAt = Math.max(previousEventAt, at);
     }
   }
   // Tool calls still open at the end are running right now, and are marked as

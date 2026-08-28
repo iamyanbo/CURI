@@ -89,18 +89,22 @@ test("piano roll segments separate tool time, reasoning, and time waiting on the
   assert.equal(run.endMs - run.startMs, 4_000);
   assert.equal(run.isError, true);
   const breakdown = traceBreakdown(segments, 10_000);
-  // The two tool calls overlap, so union coverage is 1000→5000 plus 5000→6000
-  // of reasoning; the remaining 5s is unattributed waiting, not tool time.
-  assert.equal(breakdown.waiting, 5_000);
+  // The first second produced the tool request, the two tools overlap from
+  // 1000→5000, and reasoning covers 5000→6000. Only the final 4s is uncovered.
+  assert.equal(breakdown.waiting, 4_000);
+  assert.equal(breakdown.model, 1_000);
   assert.equal(breakdown.errors, 1);
   assert.equal(breakdown.toolCalls, 2);
 });
 
 test("a tool call still open at the end is drawn as running, not dropped", () => {
   const segments = traceSegments([{ seq: 0, kind: "tool_call", toolName: "run", toolCallId: "a", atMs: 500 }], 90_000);
-  assert.equal(segments.length, 1);
-  assert.equal(segments[0]!.endMs, 90_000);
-  assert.equal(traceBreakdown(segments, 90_000).waiting, 500);
+  assert.equal(segments.length, 2);
+  const running = segments.find((item) => item.kind === "tool")!;
+  assert.equal(running.endMs, 90_000);
+  const breakdown = traceBreakdown(segments, 90_000);
+  assert.equal(breakdown.model, 500);
+  assert.equal(breakdown.waiting, 0);
 });
 
 test("workspace previews cannot escape the task worktree", () => {

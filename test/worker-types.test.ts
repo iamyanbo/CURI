@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { extractJson } from "../src/worker/types.js";
-import { providerFailureFromText } from "../src/worker/genkit-worker.js";
+import {
+  normalizeOpenAIReasoningEventLine, normalizeOpenAIReasoningPayload, providerFailureFromText,
+} from "../src/worker/genkit-worker.js";
 
 test("extractJson accepts fenced JSON with raw quotes inside a code-string field", () => {
   const response = [
@@ -47,4 +49,18 @@ test("provider throttling preserves upstream rate-limit detail", () => {
   for (const detail of ["HTTP 429", "RESOURCE_EXHAUSTED", "upstream_provider_shared_pool", "rate_limit_exceeded"])
     assert.match(providerFailureFromText(detail) ?? "", /^PROVIDER_RATE_LIMITED:/);
   assert.equal(providerFailureFromText("invalid API key"), null);
+});
+
+test("self-hosted OpenAI responses expose reasoning through Genkit's expected field", () => {
+  const payload = normalizeOpenAIReasoningPayload(JSON.stringify({
+    choices: [{ message: { content: "answer", reasoning: "private work" } }],
+  }));
+  assert.deepEqual(JSON.parse(payload).choices[0].message, {
+    content: "answer", reasoning_content: "private work",
+  });
+  const event = normalizeOpenAIReasoningEventLine(
+    'data: {"choices":[{"delta":{"reasoning":"streamed work"}}]}\n',
+  );
+  assert.equal(JSON.parse(event.slice("data: ".length)).choices[0].delta.reasoning_content, "streamed work");
+  assert.equal(normalizeOpenAIReasoningEventLine("data: [DONE]\n"), "data: [DONE]\n");
 });

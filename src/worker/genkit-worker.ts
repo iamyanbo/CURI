@@ -469,6 +469,66 @@ export async function fetchPublicText(input: string): Promise<string> {
   throw new Error("too many redirects");
 }
 
+/**
+ * vLLM's DeepSeek-V4 parser follows the newer OpenAI response spelling
+ * (`reasoning`), while Genkit's compatibility adapter currently reads the
+ * older `reasoning_content` spelling. Normalise only the response envelope;
+ * reasoning text itself is left untouched.
+ */
+export function normalizeOpenAIReasoningPayload(raw: string): string {
+  try {
+    const body = JSON.parse(raw) as Record<string, any>;
+    for (const choice of Array.isArray(body.choices) ? body.choices : []) {
+      for (const envelope of [choice?.message, choice?.delta]) {
+        if (!envelope || typeof envelope !== "object" || typeof envelope.reasoning !== "string") continue;
+        if (typeof envelope.reasoning_content !== "string") envelope.reasoning_content = envelope.reasoning;
+        delete envelope.reasoning;
+      }
+    }
+    return JSON.stringify(body);
+  } catch { return raw; }
+}
+
+export function normalizeOpenAIReasoningEventLine(line: string): string {
+  const ending = line.endsWith("\r\n") ? "\r\n" : line.endsWith("\n") ? "\n" : "";
+  const bare = ending ? line.slice(0, -ending.length) : line;
+  const match = bare.match(/^(\s*data:\s*)(.*)$/);
+  if (!match || match[2] === "[DONE]") return line;
+  return `${match[1]}${normalizeOpenAIReasoningPayload(match[2]!)}${ending}`;
+}
+
+async function compatReasoningFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
+  const response = await globalThis.fetch(input, init);
+  if (!response.ok || !response.body) return response;
+  const type = response.headers.get("content-type") ?? "";
+  const headers = new Headers(response.headers); headers.delete("content-length");
+  if (type.includes("text/event-stream")) {
+    const decoder = new TextDecoder(); const encoder = new TextEncoder(); let pending = "";
+    const body = response.body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        pending += decoder.decode(chunk, { stream: true });
+        let newline = pending.indexOf("\n");
+        while (newline >= 0) {
+          const line = pending.slice(0, newline + 1); pending = pending.slice(newline + 1);
+          controller.enqueue(encoder.encode(normalizeOpenAIReasoningEventLine(line)));
+          newline = pending.indexOf("\n");
+        }
+      },
+      flush(controller) {
+        pending += decoder.decode();
+        if (pending) controller.enqueue(encoder.encode(normalizeOpenAIReasoningEventLine(pending)));
+      },
+    }));
+    return new Response(body, { status: response.status, statusText: response.statusText, headers });
+  }
+  if (type.includes("application/json")) {
+    return new Response(normalizeOpenAIReasoningPayload(await response.text()), {
+      status: response.status, statusText: response.statusText, headers,
+    });
+  }
+  return response;
+}
+
 function providerFor(request: WorkerRequest) {
   const provider = (process.env.AR_MODEL_PROVIDER ?? "openrouter").toLowerCase();
   if (provider === "openrouter" || provider === "openai-compatible") {
@@ -498,6 +558,10 @@ function providerFor(request: WorkerRequest) {
       timeout: 2_147_000_000,
       maxRetries: 3,
       defaultHeaders: { "X-OpenRouter-Title": "CURI" },
+      // The Spark's vLLM parser emits `reasoning`; Genkit currently consumes
+      // `reasoning_content`. Stream-normalising here preserves incremental
+      // heartbeats and keeps the workaround local to self-hosted endpoints.
+      ...(local ? { fetch: compatReasoningFetch as any } : {}),
     });
     return {
       ai: genkit({ plugins: [plugin] }),
