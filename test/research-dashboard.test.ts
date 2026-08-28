@@ -261,3 +261,15 @@ test("the task card uses its full width", () => {
   const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
   assert.match(html, /#detail \.prose\{max-width:none\}/);
 });
+
+test("a finished record does not report itself as still running", () => {
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  const stats = html.slice(html.indexOf("function headStats()"), html.indexOf("function nav("));
+  // Elapsed measured to the wall clock, so a run that spanned 42 hours read as
+  // 69 and climbing whenever the page was open.
+  assert.match(stats, /const lastActivity=/);
+  assert.match(stats, /frozen&&lastActivity\?lastActivity:Date\.now\(\)/);
+  assert.match(stats, /'ran over'/);
+  // And a snapshot cannot claim a status about right now.
+  assert.match(stats, /when published/);
+});

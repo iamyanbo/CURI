@@ -491,9 +491,19 @@ function prose(host,markdown){if(!host)return;host.innerHTML=renderMarkdown(mark
 function headStats(){
   const spend=S.spend||{},ceiling=Number((S.budget&&S.budget.ceilingUsd)||0),tl=S.timeline||{};
   const running=arr(S.execution?.lanes).some(l=>l.state==='active');
+  // A published record is a snapshot. Reporting its status as "active" states
+  // something about right now that the record cannot know, and measuring elapsed
+  // time to the wall clock made a finished run appear to still be going: 69
+  // hours and climbing for a run that actually spanned 42.
+  const lastActivity=arr(S.execution?.lanes).reduce((t,l)=>Math.max(t,l.endMs||0),0);
+  const frozen=Boolean(S&&S.published)||!running;
+  const until=frozen&&lastActivity?lastActivity:Date.now();
+  const status=running?'working'
+    :S&&S.published?String(S.direction.status)+' when published'
+    :String(S.direction.status);
   const pairs=[
-    ['status',(running?'working':S.direction.status)],
-    ['elapsed',tl.firstRunAt?fmt(Date.now()-Date.parse(tl.firstRunAt)):'—'],
+    ['status',status],
+    [frozen?'ran over':'elapsed',tl.firstRunAt?fmt(until-Date.parse(tl.firstRunAt)):'—'],
     ['worked',fmt(tl.workedMs||0)],
     ['tokens in',tokens(spend.inputTokens)],
     ['tokens out',tokens(spend.outputTokens)],

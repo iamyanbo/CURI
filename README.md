@@ -393,7 +393,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 145 tests
+npm test        # 146 tests
 npm run typecheck
 ```
 
