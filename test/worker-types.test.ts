@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { extractJson } from "../src/worker/types.js";
 import {
-  normalizeOpenAIReasoningEventLine, normalizeOpenAIReasoningPayload, providerFailureFromText,
+  createReasoningTraceBatcher, normalizeOpenAIReasoningEventLine, normalizeOpenAIReasoningPayload, providerFailureFromText,
 } from "../src/worker/genkit-worker.js";
 
 test("extractJson accepts fenced JSON with raw quotes inside a code-string field", () => {
@@ -63,4 +63,19 @@ test("self-hosted OpenAI responses expose reasoning through Genkit's expected fi
   );
   assert.equal(JSON.parse(event.slice("data: ".length)).choices[0].delta.reasoning_content, "streamed work");
   assert.equal(normalizeOpenAIReasoningEventLine("data: [DONE]\n"), "data: [DONE]\n");
+});
+
+test("streamed reasoning is batched for a live trace without losing deltas", () => {
+  const emitted: string[] = [];
+  const batcher = createReasoningTraceBatcher((content) => emitted.push(content), 1_000, 10, 500);
+  batcher.add("abc", 1_100);
+  assert.deepEqual(emitted, []);
+  batcher.add("defghijk", 1_200);
+  assert.deepEqual(emitted, ["abcdefghijk"]);
+  batcher.add("later", 1_800);
+  assert.deepEqual(emitted, ["abcdefghijk", "later"]);
+  batcher.add("tail", 1_900);
+  batcher.flush(2_000);
+  assert.deepEqual(emitted, ["abcdefghijk", "later", "tail"]);
+  assert.equal(batcher.sawReasoning, true);
 });

@@ -20,6 +20,7 @@ test("lean dashboard is valid and exposes research, components, piano roll and t
   assert.match(html, /data-view="understanding"/);
   assert.match(html, /data-view="execution"/);
   assert.doesNotMatch(html, /best score|moving baseline|leaderboard|Current notebook|Protocols|Evidence ledger/i);
+  assert.match(html, /model \/ provider/);
 });
 
 test("dashboard scopes execution by component and task", () => {

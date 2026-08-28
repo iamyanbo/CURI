@@ -96,6 +96,8 @@ export const MALFORMED_TOOL_CALL_RETRIES = Number(process.env.AR_MALFORMED_TOOL_
  */
 const MAX_TRACE_STEPS = Number(process.env.AR_MAX_TRACE_STEPS ?? 20_000);
 const MAX_STEP_CHARS = 4_000;
+const REASONING_TRACE_FLUSH_CHARS = 1_600;
+const REASONING_TRACE_FLUSH_MS = 5_000;
 const MAX_TOOL_OUTPUT = 40_000;
 const MAX_FILE_BYTES = 2_000_000;
 const SKIP_DIRS = new Set([".git", "node_modules", ".autoresearch-protected"]);
@@ -507,6 +509,38 @@ export function normalizeOpenAIReasoningEventLine(line: string): string {
   return `${match[1]}${normalizeOpenAIReasoningPayload(match[2]!)}${ending}`;
 }
 
+/**
+ * Streaming providers emit reasoning in tiny deltas. Recording every token
+ * overwhelms the trace, while waiting for the final response loses reasoning
+ * on tool-call turns in compat-oai. This bounded batcher keeps reasoning live
+ * and append-only without generating thousands of one-token trace records.
+ */
+export function createReasoningTraceBatcher(
+  emit: (content: string) => void,
+  initialAt = Date.now(),
+  flushChars = REASONING_TRACE_FLUSH_CHARS,
+  flushMs = REASONING_TRACE_FLUSH_MS,
+) {
+  let pending = "";
+  let lastFlushAt = initialAt;
+  let sawReasoning = false;
+  const flush = (at = Date.now()) => {
+    if (pending) emit(pending);
+    pending = "";
+    lastFlushAt = at;
+  };
+  return {
+    add(delta: string, at = Date.now()) {
+      if (!delta) return;
+      sawReasoning = true;
+      pending += delta;
+      if (pending.length >= flushChars || at - lastFlushAt >= flushMs) flush(at);
+    },
+    flush,
+    get sawReasoning() { return sawReasoning; },
+  };
+}
+
 async function compatReasoningFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   const response = await globalThis.fetch(input, init);
   if (!response.ok || !response.body) return response;
@@ -890,21 +924,6 @@ export class GenkitWorker implements AgentWorker {
       // ignoring them undercounted output by a further order of magnitude.
       billed.reasoningTokens += Number(turn.thoughtsTokens ?? 0);
       billed.totalTokens += Number(turn.totalTokens ?? 0);
-      // Reasoning arrives per model turn, not once at the end, so it is recorded
-      // here rather than from the final response.
-      try {
-        const response = modelResponse as Record<string, any>;
-        const parts: Array<Record<string, any>> = response?.message?.content
-          ?? response?.candidates?.[0]?.message?.content ?? [];
-        const reasoned = parts.filter((part) => typeof part?.reasoning === "string" && part.reasoning.trim());
-        for (const part of reasoned) push("thinking", String(part.reasoning));
-        const thoughts = Number(turn.thoughtsTokens ?? 0);
-        if (thoughts > 0 && reasoned.length === 0) {
-          // The provider charged for reasoning but withheld the text. Record that
-          // rather than leaving an unexplained gap in the timeline.
-          push("thinking", `[${thoughts} reasoning tokens; the provider did not return the thought text]`);
-        }
-      } catch { /* reasoning capture must never break a turn */ }
       return modelResponse;
     };
 
@@ -958,20 +977,32 @@ export class GenkitWorker implements AgentWorker {
             // test was "not OpenRouter", which quietly included a self-hosted
             // OpenAI-compatible endpoint and sent Google-only fields to vLLM.
             ...(googleNative && request.tools.includes("web_search") ? { googleSearchRetrieval: {} } : {}),
-            // Reasoning is withheld unless it is asked for. Without this the
-            // provider bills thought tokens and returns no thought text, which is
-            // why the trace showed tool calls but never any reasoning.
+            // Google requires an explicit request for thought text. Self-hosted
+            // endpoints use their own chat-template default and their streamed
+            // OpenAI reasoning field is normalized and captured below.
             ...(googleNative ? { thinkingConfig: { includeThoughts: true } } : {}),
           },
           output: options.structured !== false && nativeStructuredOutput
             ? { schema: outputSchema(request.structuredOutput) } : undefined,
           use: [meterUsage],
         } as any);
+        const reasoning = createReasoningTraceBatcher((content) => push("thinking", content));
         for await (const chunk of generation.stream) {
           const text = String(chunk.text ?? "");
+          reasoning.add(String(chunk.reasoning ?? ""));
           heartbeat.activity("model_stream", text ? "model stream advanced" : "model stream event", { kind: "model", name: modelName });
         }
-        return await generation.response;
+        reasoning.flush();
+        const response = await generation.response;
+        // Non-streaming adapters can still expose reasoning only on the final
+        // response. Do not duplicate it when deltas were already recorded.
+        if (!reasoning.sawReasoning && response.reasoning) push("thinking", response.reasoning);
+        if (!reasoning.sawReasoning && !response.reasoning) {
+          const lastUsage = turnUsages[turnUsages.length - 1];
+          if ((lastUsage?.reasoningTokens ?? 0) > 0)
+            push("thinking", `[${lastUsage!.reasoningTokens} reasoning tokens; the provider did not return the thought text]`);
+        }
+        return response;
       };
       const callWithRetry = async (initial: Parameters<typeof streamOnce>[0]) => {
         let options = initial;
