@@ -1,16 +1,18 @@
 # CURI — Cumulative Research & Inquiry — long-form YouTube script
 
-Target: **22–25 minutes**. Structure is eight chapters; each opens with what is on screen, then the
-spoken line. Talking points are written as prose you can read aloud or paraphrase — they are meant
-to sound like someone explaining their own work, not a narrated feature list.
+Target: **22–25 minutes**. This is written as A-roll: read the spoken sections as a connected story,
+but keep the wording natural when you record. The production cues tell you where to cut, what to
+show as B-roll and where a punch-in or screen recording should carry the explanation.
 
 If you record only part of it, chapters 5, 6 and 7 are the ones that carry the video: what the
 runtime generalises to, what broke, and how a trace is published safely.
 
-This is a production script: every chapter should have a visible action or artefact on screen. Do
-not leave the viewer looking at a static dashboard while a paragraph of architecture is narrated.
+Every chapter should have a visible action or artefact on screen. Do not leave the viewer looking at
+a static dashboard while a paragraph of architecture is narrated. If a screen takes time to load,
+use a J-cut: start the next piece of narration over the previous shot and cut to the new screen when
+it is ready.
 
-**Required disclosure** — say it in the first 30 seconds and put it in the description:
+**Required disclosure — say this in the first 30 seconds and put it in the description:**
 
 > I made this video for the purposes of entering the Google Cloud hackathon.
 
@@ -22,297 +24,321 @@ not leave the viewer looking at a static dashboard while a paragraph of architec
 
 ---
 
-## Chapter 1 — The problem (0:00 – 2:30)
+## Chapter 1 — The problem (0:00–2:30)
 
-*On screen: the README's Research vs Benchmark Chasing table.*
+**Show:** Open on the README's “Research vs Benchmark Chasing” table. Start with a clean screen
+recording and bring in the camera only after the first line, if you are using one.
 
-Open cold, no intro music:
+**Say:**
 
 > I made this video for the purposes of entering the Google Cloud hackathon. I wanted to build an
-> autonomous research process whose output was not just a better number.
+> autonomous research process whose output was not just a better number. That seemed like a low bar,
+> but apparently it is a surprisingly difficult one to clear.
 
 > Almost every autonomous research harness I've seen is a score maximizer. It proposes a change,
 > runs the evaluator, keeps the change if the number improved, and repeats. And I want to be fair
 > to that design: when the benchmark *is* the specification — you're shipping a model and MMLU is
 > the contract — that loop is exactly right.
 >
-> As a model of research, it's poor. It invites Goodhart's law: the moment a measure becomes a
-> target it stops being a good measure. In practice these pipelines drift into hyperparameter
-> search. And we have well-established algorithms for hyperparameter search that don't need a
-> language model at all. Using an LLM for it is, I think, an irresponsible use of the capability.
+> But as a model of research, it is poor. It invites Goodhart's law: the moment a measure becomes a
+> target, it stops being a good measure. And in practice the pipeline starts looking like
+> hyperparameter search with a very expensive intern doing the clicking. We already have good
+> algorithms for hyperparameter search. Using an LLM for it is, I think, a pretty irresponsible use
+> of the capability.
 
-Then the structural point, which is the real argument:
+Keep the README on screen for the first paragraph, then cut to the dashboard for the structural
+point:
 
-> Here's the part that convinced me it isn't a prompting problem. If the unit of progress is "the
-> number went up", a result where the number goes *down* has nowhere to live in the system. It gets
-> discarded as a failed run. But a method that doesn't work, with a clear account of why, is
-> routinely the most valuable thing an experiment produces. A system that can't record a negative
-> result can't do research — no matter how you word the prompt.
+**Say:**
 
----
-
-## Chapter 2 — What it does differently (2:30 – 5:00)
-
-*On screen: the Understanding view — components, syntheses, relations graph.*
-
-> So the unit of progress here is an investigation, not a score. It starts from a question and
-> competing explanations, picks a method that can actually answer that question, and records what
-> the evidence supports or rules out — bounded by the conditions actually tested.
-
-Three mechanisms, one at a time. Show the code or the artefact for each:
-
-> **First, a delegation gate.** Before a brief reaches the executor, the runtime checks two things
-> mechanically. Does it cite any existing evidence — a component, an outcome, a source — once the
-> direction holds any? And is it a near-duplicate of something already run, without citing that
-> earlier task and saying which explanation the difference discriminates? Fail either and it's
-> refused, and the refusal goes into the orchestrator's next context. "Let me try a slightly
-> different configuration" cannot get through this.
->
-> **Second, syntheses that accumulate.** Experiments aren't the product. Findings are scoped
-> outcomes; the understanding lives in syntheses that cite the exact outcomes and sources they rest
-> on. When new evidence contradicts one, the agent writes a corrected synthesis saying what changed
-> — and the old one stays. Superseding your own account is ordinary research.
->
-> **Third — and this is the one I'd defend hardest — it's allowed to stop.** The orchestrator can
-> pause a direction when it judges a milestone reached. A score-maximizing loop structurally cannot
-> do that, because there is always another configuration to try.
+> Here's the part that convinced me this isn't a prompting problem. If the unit of progress is "the
+> number went up", then a result where the number goes *down* has nowhere to live. It gets thrown
+> away as a failed run. But a method that does not work — with a clear account of why — is often the
+> most useful thing an experiment produces. A system that cannot record a negative result cannot do
+> research, no matter how carefully I word the prompt.
 
 ---
 
-## Chapter 3 — Architecture (5:00 – 9:00)
+## Chapter 2 — What it does differently (2:30–5:00)
 
-*On screen: the README architecture diagram, then real code.*
+**Show:** Cut to the Understanding view. Punch in on a synthesis, then the relations graph.
 
-Walk the roles:
+> So I built CURI around a different unit of progress: an investigation, not a score. It starts with
+> a question and competing explanations, picks a method that might actually answer the question, and
+> records what the evidence supports or rules out. The result is always tied to the conditions that
+> were actually tested. No magical leap from "this worked once" to "we solved the field".
 
-> There's an orchestrator that decides what's worth investigating and interprets every result
-> before anything else is delegated. An executor that receives an already-decided experiment —
-> model, scale, regime, evaluator all fixed by the orchestrator — and implements, runs and reports
-> it. A watcher that pulls from arXiv, GitHub and Hacker News and judges each source for relevance
-> before admission. And a supervisor that keeps the whole thing running.
+Take these one at a time. Use a short code or dashboard cutaway for each, then return to the
+Understanding view:
+
+**Say:**
+
+> **First, a delegation gate.** Before a brief reaches the executor, the runtime checks two things.
+> Does it point to any existing evidence? And is it secretly the same experiment as something that
+> already ran? If it fails either check, it gets refused, and the refusal is shown to the orchestrator
+> on its next turn. So "let me try the same thing with one different number" is not a research plan.
 >
-> A deliberate constraint: the executor has no literature role at all. It never chooses among
-> candidate experiments and never fills in a missing design decision. If prior work is needed, the
-> orchestrator requests a watch and ends its turn — then synthesises the returned sources and picks
-> the experiment itself on a later turn. Every decision that changes what a result *means* stays
-> with the orchestrator.
+> **Second, syntheses that accumulate.** The experiments are not the product. Findings are scoped
+> outcomes, and the understanding lives in syntheses that cite the outcomes and sources behind them.
+> When new evidence contradicts a synthesis, the agent writes a new version explaining what changed.
+> The old version stays. History is useful, even when it makes you look wrong.
+>
+> **Third — and this is the one I would defend hardest — it is allowed to stop.** The orchestrator
+> can pause a direction when it thinks the next experiment is not worth doing yet. A score-maximizing
+> loop cannot really do that. There is always one more configuration to try, and apparently there is
+> always one more configuration to try after that.
 
-The environment sheet is worth 30 seconds because it is unusual:
+---
 
-> Before any of this, a preflight measures the actual machine — real interpreters, real devices,
-> real installed packages, by running them, not by asking the model what it thinks is installed.
-> The orchestrator fixes experiment scale against that measured sheet. It's the difference between
-> an agent that writes code for an imaginary A100 and one that writes code for the card you have.
+## Chapter 3 — Architecture (5:00–9:00)
 
-Then the stack, briefly:
+**Show:** Start on the README architecture diagram, then cut to the corresponding code and the live
+dashboard. Keep the diagram visible as an orientation map; do not try to explain every arrow.
 
-> Gemini 3.7 Flash through Genkit for the agents, with a model middleware for usage metering.
-> SQLite locally, because the research loop needs a persistent filesystem and git worktrees.
-> Firestore for the published record and Cloud Run for the public mirror. Each experiment runs in
-> its own git worktree, so an attempt can be resumed rather than restarted.
+**A-roll:** Walk through the roles while the architecture diagram stays visible:
+
+> There are four jobs here. The orchestrator decides what is worth investigating and interprets every
+> result before anything else is delegated. The executor gets an already-decided experiment — model,
+> scale, regime and evaluator — and implements, runs and reports it. The watcher pulls from arXiv,
+> GitHub and Hacker News and decides what is worth bringing in. And the supervisor keeps the whole
+> thing moving when I am not sitting here clicking buttons.
+>
+> There is one deliberately annoying constraint: the executor has no literature role. It cannot
+> choose between candidate experiments and it cannot quietly fill in a missing design decision. If
+> prior work is needed, the orchestrator requests a watch and ends its turn. The sources come back,
+> the orchestrator synthesises them, and only then does it choose the experiment. Decisions that
+> change what a result *means* stay in one place.
+
+**Transition:** Hold on the environment sheet for about 30 seconds. This is unusual enough to show:
+
+> Before any of this, a preflight measures the actual machine. It checks real interpreters, real
+> devices and real installed packages by running them, rather than asking the model what it thinks
+> is installed. The orchestrator fixes the experiment scale against that sheet. So the agent writes
+> code for the card I actually have, not the imaginary A100 it would like to have.
+
+**Transition:** Cut from the environment sheet to a quick stack overview:
+
+> The stack is fairly ordinary. Gemini 3.7 Flash through Genkit for the agents, with middleware to
+> meter usage. SQLite locally, because the loop needs a persistent filesystem and git worktrees.
+> Firestore holds the published record and Cloud Run serves the public mirror. Each experiment gets
+> its own worktree, so an interrupted attempt can be resumed instead of started from scratch.
 
 > The attention direction is the published example. The strategy-generalization run stays local on
 > the DGX Spark; it is shown through a forwarded dashboard and is not part of the Firestore record.
 
-> The run I am showing has four research threads and seventeen recorded outcomes, and there is a
-> second direction on other hardware with five more threads. The headline findings are a compact
-> summary of those outcomes, not twenty-one claims of new scientific discovery.
+> The run I am showing has four research threads and seventeen recorded outcomes. There is a second
+> direction on other hardware with five more threads. Those numbers are a summary of the record,
+> not twenty-one claims of new scientific discovery.
 
 ---
 
-## Chapter 4 — A real finding (9:00 – 12:30)
+## Chapter 4 — A real finding (9:00–12:30)
 
-*On screen: the outcome in the dashboard, then the agent trace that produced it.*
+**Show:** Open the outcome in the dashboard, then the agent trace that produced it. Let the viewer
+see the question before you reveal the result.
 
-Set the question before the answer:
+**Say:**
 
-> The question was whether heuristic KV-cache eviction keeps the tokens a later question is going to
-> need. H2O-style policies retain tokens by cumulative attention mass — keep what's been attended
-> to, drop the rest.
+> The question was simple to state: does heuristic KV-cache eviction keep the tokens that a later
+> question is going to need? H2O-style policies keep tokens according to cumulative attention mass —
+> keep what has been attended to, drop the rest. It sounds reasonable. It is also about to run into
+> a problem.
 >
 > The result: **zero percent on non-local needle retrieval at fifty percent cache budget.**
 > Statistically indistinguishable from evicting at random.
 >
-> And later in the run it recorded something a score-maximizing loop structurally cannot: a
-> refutation. Randomized-Hadamard rotation does not prevent key quantization damage. Twelve
-> supported, three bounded, one refuted, one inconclusive — four categories, not one.
+> Later in the run it recorded something a score-maximizing loop usually cannot: a refutation.
+> Randomized-Hadamard rotation does not prevent key quantization damage. Twelve supported, three
+> bounded, one refuted, one inconclusive. Four categories, not one leaderboard number.
 
-Then the mechanism, then — importantly — the caveats:
+Cut to the experiment or trace for the mechanism, then return to the outcome for the caveats:
 
-> The mechanism is clean once you see it. During prefill, filler tokens don't attend to an isolated
-> fact. So attention mass never marks that fact as worth keeping. The policy is causally blind to
-> questions that haven't been asked yet.
+**Say:**
+
+> The mechanism is pretty clean once you see it. During prefill, the filler tokens do not attend to
+> an isolated fact. So the attention mass never marks that fact as important enough to keep. The
+> policy is causally blind to questions that have not been asked yet. It is trying to predict the
+> future using only the past, which is generally a risky strategy.
 >
-> Two things matter more than the number. It refuted the study's *own* leading hypothesis — the
-> agent expected graceful degradation. And it's only a meaningful claim because the design included
-> a random-eviction control; without that, zero percent tells you about the task, not the policy.
-> It was recorded as `bounded`, not `supported`, because n=3 on a 0.5B model observes something —
-> it doesn't establish it.
+> Two things matter more than the number. First, it refuted the study's own leading hypothesis — the
+> agent expected graceful degradation. Second, the result is only meaningful because the design
+> included a random-eviction control. Without that control, zero percent tells you the task is hard,
+> not that the policy is the problem. It was recorded as `bounded`, not `supported`, because n=3 on
+> a 0.5B model tells us something, but it does not establish a universal law of attention.
 
-Be first to say it isn't new:
+End this chapter by saying plainly what the result is not:
 
-> Now — if you know this literature, you recognise this. It's the failure mode StreamingLLM and
-> later needle-retrieval work describe. Same for the other findings: the speculative decoding result
-> is the standard acceptance-rate/latency crossover, and the K/V quantization asymmetry is what KIVI
-> reports. Three of the four headline attention results reproduce published work.
+**Say:**
+
+> Now, if you know this literature, you recognise the result. It is the failure mode described by
+> StreamingLLM and later needle-retrieval work. The other findings are similar: the speculative
+> decoding result is the standard acceptance-rate versus latency crossover, and the K/V quantization
+> asymmetry is what KIVI reports. Three of the four headline attention results reproduce published
+> work.
 >
-> I'd rather say that myself than have you notice it. The claim I'm making isn't novelty. It's that
-> these were independently re-derived, with controls, on hardware I control, and that the failures
-> stayed in the record.
+> I would rather say that myself than have you notice it in the comments. I am not claiming novelty.
+> I am claiming that the results were independently re-derived, with controls, on hardware I
+> control, and that the failures stayed in the record.
 
 ---
 
-## Chapter 5 — Three instances, one runtime (12:30 – 15:30)
+## Chapter 5 — Three instances, one runtime (12:30–15:30)
 
-*On screen: the cloud mirror, then the forwarded Spark dashboard, then the local private one.*
+**Show:** Start with the Cloud Run mirror, cut to the forwarded Spark dashboard, then cut to the
+private local instance. If the layout allows it, finish with all three views side by side.
 
-This is the chapter that tests whether any of the previous four generalise. Show all three
-side by side if you can; the point lands faster than it can be said.
+**Direction:** This chapter tests whether the runtime generalises. The point will land faster if the
+viewer can see the three instances rather than hearing a list of environments.
 
-> Everything so far came from one direction on one machine. That proves very little — a system
-> that works on the problem it was built for usually does.
+> Everything so far came from one direction on one machine. That proves very little. A system that
+> works on the problem it was built for usually does. That is not exactly a hostile test.
 >
-> So here is the same runtime, unchanged, in three places at once.
+> So here is the same runtime in three places: the published attention run, a different domain on a
+> different machine, and one private instance I actually use.
 
-**The published one** (~30s)
-> This is the attention and KV-cache direction, running on a consumer GPU with Gemini through
-> Vertex, publishing to Firestore and served from Cloud Run. Forty-three hours, seventeen
-> outcomes, forty dollars.
+**The published one — about 30 seconds**
+> First, the published one. This is the attention and KV-cache direction, running on a consumer GPU
+> with Gemini through Vertex, published to Firestore and served from Cloud Run. Forty-three hours,
+> seventeen outcomes and about forty dollars. So, not free. But at least it produced a record.
 
-**A different field, different hardware** (~45s)
-> This is a DGX Spark asking a completely different question: when does a trading strategy found
-> in historical data keep its edge outside the window it was found in? Different domain, different
-> machine, same code — and a decade of later data deliberately kept off that box.
+**A different field, different hardware — about 45 seconds**
+> Next, the different domain. This is a DGX Spark asking when a trading strategy found in historical
+> data keeps its edge outside the window in which it was found. Different domain, different machine,
+> same runtime — and a decade of later data deliberately kept off that box. I am not showing you a
+> trading system that has already peeked at the answer.
 
-**And one I actually use** (~60s)
-> This third one is not in the public repository, because it is mine. It is a private finance
-> pipeline I run for my own work, on real market data, and it is the one I would point at if you
-> asked whether this is a demo or a tool.
+**And one I actually use — about 60 seconds**
+> And this third one is not in the public repository, because it is mine. It is a private finance
+> pipeline I run on real market data. This is the one I would point at if you asked whether CURI is a
+> demo or a tool. A demo runs once. A tool has to survive being used.
 >
-> Look at the spend: zero. Not "cheap" — zero. There is no API bill because there is no API. The
-> agents are talking to a DeepSeek model I host on the Spark, over an OpenAI-compatible endpoint,
-> and the runtime does not care which of the two it is talking to.
+> And look at the spend: zero. Not “cheap” — zero. There is no hosted API bill because I am running
+> DeepSeek on the Spark and talking to it through an OpenAI-compatible endpoint. From CURI's point
+> of view, it does not care whether the model is in the cloud or sitting in the next room.
 
-**Why that is more than a cost trick** (~45s)
-> When I added that, I had to fix something revealing: the cost estimator charged an unknown model
-> the list price of a hosted one, so free local inference was accruing imaginary spend and would
-> eventually have tripped a ceiling against money nobody was paying. Self-hosted inference is
+**Why that is more than a cost trick — about 45 seconds**
+> When I added that, I found a slightly embarrassing bug. The cost estimator saw an unknown model,
+> assumed it was a hosted one, and started charging list price for free local inference. The system
+> was preparing to hit a spending limit against money nobody was paying. Self-hosted inference is
 > recorded as zero now.
 >
-> The provider is one line of configuration — Gemini, Vertex, OpenRouter, or any OpenAI-compatible
-> server on your own network. Which means the cloud parts of this are genuinely optional. The
-> research loop, the gates, the record and the dashboard all work with no cloud account at all.
+> The provider is one line of configuration: Gemini, Vertex, OpenRouter or any OpenAI-compatible
+> server on your own network. The cloud parts are genuinely optional. The research loop, the gates,
+> the record and the dashboard all work without a cloud account.
 
-*Cut to the `.env` showing `AR_MODEL_PROVIDER=openai-compatible` and `AR_MAX_COST_USD=0`, then back
-to the running dashboard with its spend at $0.00.*
+**Show:** Cut to the `.env` showing `AR_MODEL_PROVIDER=openai-compatible` and `AR_MAX_COST_USD=0`,
+then cut back to the running dashboard with its spend at $0.00.
 
 ---
 
-## Chapter 6 — What broke (15:30 – 20:00)
+## Chapter 6 — What broke (15:30–20:00)
 
-The most valuable chapter for a technical audience. Six short stories, with the three scheduling
-stories treated as one thread.
-
-*On screen: show the failure or misleading output first, then the code or trace that explains it,
-and finally the fix.*
+This is the most valuable chapter for a technical audience. Keep each story short and use the same
+visual rhythm: show the failure or misleading output, cut to the code or trace that explains it,
+then show the fix. The three scheduling stories are one thread, so let those cuts flow into each
+other.
 
 **Cost accounting was off by 20×.**
 > My first accounting recorded the final model call of each turn. The console said 2M input tokens;
-> I said 100k. Twenty times off on input, ninety times on output. Two compounding reasons: a tool
-> loop re-sends the whole conversation every turn, and reasoning tokens come back in a separate
-> field. The fix was a Genkit middleware that meters every model call and counts thoughts as output.
-> If you're enforcing a spend ceiling, measure at the middleware — otherwise your ceiling is
-> fiction.
+> I said 100k. Twenty times off on input, ninety times on output. Not ideal when the whole point is
+> to enforce a budget.
+>
+> There were two reasons. A tool loop resends the whole conversation every turn, and reasoning
+> tokens come back in a separate field. The fix was middleware that meters every model call and
+> counts thoughts as output. If you enforce a spend ceiling, measure it at the middleware. Otherwise
+> the ceiling is just a decorative number.
 
 **An error that said nothing.**
-> Every provider failure logged as "Provider returned error". One line caused it:
-> `JSON.stringify(error.cause)` returns `{}`, because an Error's properties aren't enumerable. Every
-> upstream reason — moderation, 5xx, context overflow — was thrown away at the exact moment it
-> mattered.
+> Every provider failure logged as “Provider returned error.” Very useful. One line caused it:
+> `JSON.stringify(error.cause)` returns `{}`, because an Error's properties are not enumerable. So
+> moderation, 5xxs and context overflows all disappeared at the exact moment I needed to know what
+> happened.
 
 **Silent truncation looks identical to a hang.**
 > A 400-step trace limit was hit by one long attempt, and the trace just stopped. The run looked
-> idle for an hour while it was working. I misdiagnosed it at first. Any limit that discards data
-> has to be loud — it's now 20,000 steps and truncation is written into the trace as a marker.
+> idle for an hour while it was working. I blamed the wrong thing at first. Any limit that discards
+> data has to be loud, so it is now 20,000 steps and truncation is written into the trace as a marker.
 
 **An agent given a turn will use it.**
-> This is the one I'd most want another builder to hear. The orchestrator can pause when there's
-> nothing worth doing — and continuous mode resumed it on a timer, which hands it the same context
-> and asks the same question. Given a turn, it records *something* rather than nothing: a restated
-> synthesis, a re-described map of its own threads. I fixed the restated syntheses; it moved to
-> relationships. I fixed those; it reworded them to slip past the check. Three loops, one cause.
+> This is the one I would most want another builder to hear. The orchestrator can pause when there
+> is nothing worth doing. Continuous mode then resumed it on a timer, handed it the same context,
+> and asked the same question. And given a turn, the agent will use it. It wrote a restated synthesis,
+> then a re-described map of its own threads. I fixed the syntheses; it moved to relationships. I
+> fixed those; it reworded them to slip past the check. Three loops, one cause.
 >
-> Roughly half of one direction's budget went to pausing and resuming. The fix wasn't a better
-> duplicate check, it was to stop resuming on a clock — a pause now stands until evidence arrives.
-> An hour of quiet went from about two dollars to seventeen cents, and recorded findings went up.
+> Roughly half of one direction's budget went to pausing and resuming. The fix was not a cleverer
+> duplicate check. It was to stop waking the agent on a clock. A pause now stands until evidence
+> arrives. An hour of quiet went from about two dollars to seventeen cents, and the recorded
+> findings went up.
 
 **A scheduler must not mistake its own bookkeeping for progress.**
-> The backoff reset on any new event — including the pause the orchestrator writes and the resume
-> the supervisor writes a moment later. The loop was persuading itself that research had happened
-> by writing about its own scheduling.
+> The backoff reset on any new event — including the pause the orchestrator writes and the resume the
+> supervisor writes a moment later. So the loop was persuading itself that research had happened by
+> writing about its own scheduling. It was busy, technically. It was not learning.
 
 **"Run forever" is a scheduling problem.**
-> Giving the agent permission to stop created a new bug: continuous mode woke the paused direction
-> every 15 seconds, at about 15 cents a turn, to re-ask a question whose context hadn't changed. The
-> fix was to treat a pause and an idle turn as the same signal, and back both off on one curve from
-> one minute to thirty — resetting the moment anything actually happens. In practice the literature
-> watcher becomes the metronome: research resumes because evidence arrived, not because a timer
+> Giving the agent permission to stop created a new bug. Continuous mode woke the paused direction
+> every 15 seconds, at about 15 cents a turn, to ask the same question with the same context. The fix
+> was to treat a pause and an idle turn as the same signal, and back both off on one curve from one
+> minute to thirty — resetting only when something actually happens. In practice, the literature
+> watcher becomes the metronome. Research resumes because evidence arrived, not because a timer
 > fired.
 
 ---
 
-## Chapter 7 — Publishing traces without publishing your machine (20:00 – 23:00)
+## Chapter 7 — Publishing traces without publishing your machine (20:00–23:00)
 
-*On screen: the mirror's agent trace, then `trace-publish.ts`, then a withheld step.*
+**Show:** Start on the mirror's agent trace, cut to `trace-publish.ts`, then show a withheld step.
 
 > Originally the mirror showed timing but not transcripts, because traces contain prompts, paths and
-> command output. That withholds the most interesting part of the record to protect against a risk
-> concentrated in one part of it.
+> command output. Which means the most interesting part was also the part most likely to contain
+> something I should not publish.
 >
-> The obvious fix is to redact harder. I think that's the wrong shape. A redactor is a guess about
-> what a leak looks like, and when the guess is wrong it fails *silently* — which is the worst
-> property a privacy mechanism can have.
+> The obvious fix is to redact harder. I think that is the wrong shape. A redactor is a guess about
+> what a leak looks like. When the guess is wrong, it fails *silently*. That is a terrible property
+> for a privacy mechanism.
 
-The design, which is the transferable idea:
+Now explain the design. This is the transferable idea:
 
-> So publishing runs in two stages. Redact — then verify. The assembled record gets walked field by
-> field and checked against identifiers read from the running environment: the real username,
-> hostname, home directory, and the value of every credential-shaped variable. If a field still
-> matches, the publish stops. Nothing gets written.
+> So publishing runs in two stages: redact, then verify. The assembled record gets walked field by
+> field and checked against identifiers from the running environment — username, hostname, home
+> directory and the value of every credential-shaped variable. If something still matches, the
+> publish stops. Nothing gets written. The safest output is sometimes no output.
 >
-> The key property: because the check runs on the *assembled* record, no part of the system has to
-> be trusted to have remembered to redact. A pattern I failed to anticipate costs a refused publish
+> The important part is that the check runs on the *assembled* record. I do not have to trust every
+> part of the system to remember to redact. If I miss a pattern, the result is a refused publish
 > instead of a leak.
 
-Close with the bug it caught — this lands well:
+Close on the bug the check caught. Hold the source URL on screen while you say this:
 
 > And it immediately caught a bug of exactly the kind it exists for. My drive-letter pattern had no
-> lookbehind, so the `s:` in `https:` parsed as a drive letter. Every cited source URL in the
-> published record would have been replaced with a path marker. There's now a test asserting arXiv
-> links survive redaction.
+> lookbehind, so the `s:` in `https:` got parsed as a drive letter. Every cited source URL would have
+> been replaced with a path marker. Not a great look for a literature system. There is now a test
+> asserting that arXiv links survive redaction.
 
 ---
 
-## Chapter 8 — What it can't do yet (23:00 – 25:00)
+## Chapter 8 — What it can't do yet (23:00–25:00)
 
-*On screen: the README's "Limits of the current evidence".*
+**Show:** Bring up the README's “Limits of the current evidence.” Let this be a slower section and
+end on the limitations rather than a call to action.
 
-End on the limitations, not a call to action:
-
-> The attention results are bounded to 0.5B–1.5B models at 4K context on one consumer GPU. That's
-> *simulated* memory pressure, not the long-context regime the attention direction ultimately
-> targets. The strategy direction ran on a DGX Spark, but its results are still provisional and its
-> withheld decade has not been evaluated.
-> Sample sizes are small. The eviction study measures the symptom, not the mechanism — it doesn't
-> record whether the needle token survived eviction, so "evicted it" and "kept it but couldn't use
-> it" are still undistinguished.
+> Now for the part where I put the brakes on. The attention results are bounded to 0.5B–1.5B models
+> at 4K context on one consumer GPU. That is *simulated* memory pressure, not the long-context regime
+> the attention direction ultimately targets. The strategy direction ran on a DGX Spark, but those
+> results are still provisional and the withheld decade has not been evaluated.
 >
-> The honest summary is the one I started with: the attention run re-derived published results, and
-> the strategy run is not a validated trading result. Whether this process *can* produce something
-> new is an open question about scale, and I'd rather leave it as a question than dress it up.
+> The sample sizes are small. The eviction study measures the symptom, not the mechanism. It does
+> not record whether the needle token was evicted or survived but could not be used. Those are still
+> two different explanations, and this run does not separate them.
 >
-> It's MIT licensed, it runs locally on your own API key, and the cloud parts are optional. Link's
-> in the description.
+> So the honest summary is the one I started with. The attention run re-derived published results,
+> and the strategy run is not a validated trading result. Whether this process *can* produce
+> something new is still an open question about scale. I would rather leave it as a question than
+> dress it up as an answer.
+>
+> It is MIT licensed, it runs locally on your own API key, and the cloud parts are optional. The link
+> is in the description. If you try it, tell me what it gets wrong.
 
 ---
 

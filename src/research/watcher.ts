@@ -7,6 +7,7 @@ import { statePath } from "./paths.js";
 import { PROVIDERS, type Lead } from "../scout.js";
 import { assertPublicUrl, runWorker } from "../worker/genkit-worker.js";
 import { requestedStop, watcherStopFile } from "./control.js";
+import { arxivByTitle, doiFrom, looksClosed, openAccessContact, openAccessUrl } from "./open-access.js";
 import { ResearchStore, researchHash, researchId, researchNow } from "./store.js";
 import type { LeanSource } from "./types.js";
 
@@ -198,7 +199,7 @@ export async function readNextResearchSources(store: ResearchStore, projectRoot:
     `- ${item.component_id}: ${item.title}\n  ${String(item.description_md).slice(0, 500)}`).join("\n");
   for (const source of rows) {
     if (existsSync(watcherStopFile(projectRoot)) || requestedStop(projectRoot)) break;
-    let text: string;
+    let text = "";
     const rawPath = join(sourceRoot, `${source.source_id}.raw`);
     const normalizedPath = join(sourceRoot, `${source.source_id}.md`);
     try {
@@ -212,7 +213,34 @@ export async function readNextResearchSources(store: ResearchStore, projectRoot:
           normalizedPath: relative(projectRoot, normalizedPath).replace(/\\/g, "/"), contentHash: researchHash(text) });
       }
     } catch (error) {
-      store.reviewSource(source.source_id, "unreadable", String(error)); result.unreadable++; continue;
+      // A publisher that refuses automated clients is not an unreadable paper.
+      // Before giving up, look for a copy the rights-holder has made openly
+      // available: Unpaywall for a DOI, then an arXiv preprint by title.
+      let recovered = false;
+      if (looksClosed(source.canonical_url, String(error))) {
+        try {
+          const doi = doiFrom(source.canonical_url);
+          const open = doi ? await openAccessUrl(doi, openAccessContact()) : null;
+          const fallback = open ?? await arxivByTitle(String(source.title ?? ""));
+          if (fallback) {
+            const acquired = await acquireDocument(fallback, rawPath);
+            text = acquired.text;
+            writeFileSync(normalizedPath, text, "utf8");
+            store.markSourceRetrieved({ sourceId: source.source_id,
+              rawPath: relative(projectRoot, rawPath).replace(/\\/g, "/"),
+              normalizedPath: relative(projectRoot, normalizedPath).replace(/\\/g, "/"),
+              contentHash: researchHash(text) });
+            recovered = true;
+          }
+        } catch { /* the open copy did not work either; fall through to the record below */ }
+      }
+      if (!recovered) {
+        // Say which it was, so a closed-access paper is not filed as a broken one.
+        const why = looksClosed(source.canonical_url, String(error))
+          ? `closed access: no openly available copy found (${String(error)})`
+          : String(error);
+        store.reviewSource(source.source_id, "unreadable", why); result.unreadable++; continue;
+      }
     }
     const inline = text.length <= MAX_INLINE_SOURCE ? text
       : `${text.slice(0, 90_000)}\n\n[LONG SOURCE: middle omitted from inline prompt; use read on ${relative(projectRoot, normalizedPath).replace(/\\/g, "/")} to inspect it]\n\n${text.slice(-90_000)}`;
