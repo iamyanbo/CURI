@@ -108,6 +108,10 @@ input:focus{outline:none;border-color:var(--accent-dim)}
 .prose.clamped::after{content:'';position:absolute;left:0;right:0;bottom:0;height:64px;
   background:linear-gradient(180deg,transparent,var(--surface-2))}
 .chip.readall{margin-top:10px;cursor:pointer}
+/* The active scope changes what every panel is showing, so it leads the bar
+   rather than being pushed to the far end of a wrapping toolbar. */
+.chip.scopechip{background:var(--accent);border-color:var(--accent);color:#0b0f14;font-weight:600}
+.chip.scopechip:hover{filter:brightness(1.1)}
 .chip.readall:hover{border-color:var(--accent);color:var(--text-1)}
 .clip-sm{max-height:200px;overflow:auto}
 
@@ -642,7 +646,7 @@ function understanding(){
   if(!syn.length){host.innerHTML='<div class="empty">No synthesis in this scope yet. Findings stay visible as tentative outcomes until the orchestrator synthesises them.</div>';return}
   host.innerHTML=syn.map(s=>{
     const status=s.status||'tentative';
-    const spans=arr(s.componentIds).map(id=>arr(S.components).find(c=>c.component_id===id)?.title||id);
+    const spans=arr(s.componentIds).map(id=>({id,title:arr(S.components).find(c=>c.component_id===id)?.title||id}));
     const title=(String(s.body_md).split(/\r?\n/).find(l=>l.trim())||'Synthesis').replace(/^#+\s*/,'').replace(/^Synthesis:\s*/i,'');
     return `<article class="finding">
       <div class="head"><h3>${esc(title)}</h3><span class="status ${esc(status)}">${esc(String(status).replace('_',' '))}</span></div>
@@ -650,7 +654,7 @@ function understanding(){
         <div class="prose ${expanded.has('syn:'+s.synthesis_id)?'':'clamped'}" data-md="${esc(s.synthesis_id)}"></div>
         <button class="chip readall" data-expand-syn="${esc(s.synthesis_id)}">${expanded.has('syn:'+s.synthesis_id)?'collapse':'read all'}</button>
         <div class="provenance"><span class="t-micro">spans</span>${
-          spans.map(x=>`<span class="idchip comp">${esc(x)}</span>`).join('')||'<span class="t-meta">direction level</span>'}</div>
+          spans.map(x=>`<span class="idchip comp go" data-scope="${esc(x.id)}" title="Scope the dashboard to this thread">${esc(x.title)}</span>`).join('')||'<span class="t-meta">direction level</span>'}</div>
         <div class="provenance"><span class="t-micro">evidence</span>
           ${arr(s.outcomeIds).map(id=>{
             // Every cited outcome used to render as the word "finding", so nine
@@ -679,6 +683,11 @@ function understanding(){
   // A synthesis runs to eight thousand characters on average. Shown in full,
   // twenty-eight of them are a wall no reader scans; clamped, the view becomes a
   // list of claims that opens on demand.
+  // A synthesis names the threads it spans; those names are the natural way into
+  // them, and they were plain text.
+  host.querySelectorAll('[data-scope]').forEach(el=>el.onclick=e=>{e.stopPropagation();
+    component=el.dataset.scope;invalidate('components');invalidate('understanding');
+    invalidate('tasks');invalidate('roll');paint()});
   host.querySelectorAll('[data-expand-syn]').forEach(el=>el.onclick=e=>{e.stopPropagation();
     const key='syn:'+el.dataset.expandSyn;
     expanded.has(key)?expanded.delete(key):expanded.add(key);understanding()});
@@ -1053,17 +1062,22 @@ function rollLane(l,w,map){
 }
 function execution(){
   const ls=lanes();
-  $('#rollbar').innerHTML='<span class="t-micro">role</span>'
+  const scopeNote=component!=='__all'
+    ? `<button class="chip scopechip" data-unscope="1" title="Show every thread again">scoped to ${esc((arr(S.components).find(c=>c.component_id===component)||{}).title||'thread')} ✕</button>`
+    : '';
+  $('#rollbar').innerHTML=scopeNote+'<span class="t-micro">role</span>'
     +['all','orchestrator','executor','watcher'].map(r=>`<button class="chip ${roleFilter===r?'active':''}" data-role="${r}">${r}</button>`).join('')
     +'<span class="t-micro" style="margin-left:12px">window</span>'
     +[['fit','fit'],[15,'15m'],[60,'1h'],[360,'6h']].map(([z,n])=>`<button class="chip ${zoom===z?'active':''}" data-zoom="${z}">${n}</button>`).join('')
     +`<button class="chip ${collapseIdle?'active':''}" data-collapse="1" title="Collapse stretches where nothing was running">${collapseIdle?'idle collapsed':'show idle'}</button>`
-    +(component!=='__all'?`<span class="chip active" style="margin-left:auto">scoped to ${esc((arr(S.components).find(c=>c.component_id===component)||{}).title||'thread')}</span>`:'')
+
     +(task?'<button class="chip active" data-clear="1">clear task filter</button>':'');
   $('#rollbar').querySelectorAll('[data-role]').forEach(el=>el.onclick=()=>{roleFilter=el.dataset.role;invalidate('roll');paint()});
   $('#rollbar').querySelectorAll('[data-zoom]').forEach(el=>el.onclick=()=>{zoom=el.dataset.zoom==='fit'?'fit':Number(el.dataset.zoom);invalidate('roll');paint()});
   $('#rollbar').querySelectorAll('[data-clear]').forEach(el=>el.onclick=()=>{task=null;invalidate('roll');paint()});
   $('#rollbar').querySelectorAll('[data-collapse]').forEach(el=>el.onclick=()=>{collapseIdle=!collapseIdle;invalidate('roll');paint()});
+  $('#rollbar').querySelectorAll('[data-unscope]').forEach(el=>el.onclick=()=>{
+    component='__all';invalidate('roll');invalidate('components');invalidate('understanding');invalidate('tasks');paint()});
   if(!lane||!ls.some(x=>x.id===lane)){const rank=['executor','orchestrator','watcher'];
     lane=(ls.filter(x=>x.state==='active').sort((a,b)=>rank.indexOf(a.role)-rank.indexOf(b.role))[0]||ls[0]||{}).id||null}
   const roll=$('#roll'),keep=roll.scrollTop;

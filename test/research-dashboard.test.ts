@@ -273,3 +273,17 @@ test("a finished record does not report itself as still running", () => {
   // And a snapshot cannot claim a status about right now.
   assert.match(stats, /when published/);
 });
+
+test("a synthesis's threads are the way into them", () => {
+  const html = readFileSync(join(process.cwd(), "src", "research", "dashboard.html"), "utf8");
+  const view = html.slice(html.indexOf("function understanding()"), html.indexOf("function components()"));
+  // The spans row mapped component ids to titles and discarded the ids, so the
+  // threads a synthesis names could not be navigated to.
+  assert.match(view, /componentIds\)\.map\(id=>\(\{id,title:/);
+  assert.match(view, /data-scope="\$\{esc\(x\.id\)\}"/);
+  assert.match(view, /host\.querySelectorAll\('\[data-scope\]'\)/);
+  // And the scope a view is under can be released from where it is announced.
+  const roll = html.slice(html.indexOf("function execution()"), html.indexOf("async function loadRun"));
+  assert.match(roll, /data-unscope/);
+  assert.match(roll, /component='__all'/);
+});

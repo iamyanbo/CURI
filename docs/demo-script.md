@@ -1,3 +1,4 @@
+
 # CURI — Cumulative Research & Inquiry — 4-minute demo script
 
 Covers the four required beats: the problem, the value proposition, the app in action, and visible
@@ -32,9 +33,10 @@ consoles moving while you speak; each section says what to show and what the vie
 > pipelines collapse into hyperparameter search. We already have good algorithms for
 > hyperparameter search. Using a language model for it is a waste of what the model can do.
 >
-> The failure is structural, not a matter of prompting. If the system's unit of progress is "the
-> number improved", it can never record that a method *failed*, and a negative result is often the
-> most useful thing an experiment produces.
+The problem with these pipelines is structural. When progress is defined as a number going up,
+failures are discarded rather than saved as evidence. A research system should preserve negative
+results, because learning what does not work is just as valuable as a positive outcome of an
+experiment.
 
 > I made this demo for the purposes of entering the Google Cloud hackathon. The question I wanted
 > to explore was whether an autonomous system could do research without turning every question into
@@ -50,93 +52,94 @@ consoles moving while you speak; each section says what to show and what the vie
 > explanations, chooses a method that can actually answer it, and records what the evidence
 > supports or rules out — bounded by the conditions actually tested. There is no global score and
 > no incumbent implementation to beat.
->
-> Three things make that more than a prompt. A delegation gate mechanically refuses a brief that
-> cites no prior evidence or repeats an earlier experiment. Findings accumulate as syntheses that
-> can be superseded rather than overwritten. And the agent is allowed to stop when it has nothing
-> worth asking — which is the part a score-maximizing loop structurally cannot do.
+
+> CURI is organized as a pipeline with separate research roles. The watcher gathers relevant prior
+> work. The orchestrator uses that work to choose an open question and write an experiment brief. It
+> delegates the experiment to an executor, which runs it in an isolated worktree. When the result
+> returns, the orchestrator interprets it and records an outcome or synthesis.
 
 *On screen:* the Understanding view — components, syntheses, and the relations graph.
 
+> I started the first run with a broad question about how language-model systems behave when memory
+> and time are limited. CURI turned that question into four research threads and ran controlled
+> experiments across them. The run recorded seventeen outcomes, including supported findings,
+> bounded results, a refutation and an inconclusive result.
+
 ---
 
-## 1:05 – 2:35 — The app in action
+## 1:05 – 2:25 — The run in the dashboard
 
-Move through the dashboard, narrating what is on screen. Do not describe features; show the run.
+Move through these views in order: direction, execution timeline, trace and outcome.
 
 **Direction and threads** (~10s)
-> This direction asks how transformer inference mechanisms adapt across memory-pressure and
-> long-context regimes. Four research threads, each carrying its own evolving understanding, and
-> seventeen recorded outcomes across forty-three hours.
 
-**The piano roll** (~15s)
-> This is the actual execution, on a real time axis: reasoning in one colour, tool calls in
-> another, model wait, idle, errors. You can see where the time went — and it is mostly not the
-> GPU. Measured across this run: about an hour of tool time against an hour and a half waiting on
-> the model, with the GPU at a third utilisation.
+*On screen:* the direction card and its four research threads.
 
-**The agent trace** (~10s)
-> Clicking a run opens the transcript: the model's reasoning, the experiment code it wrote, the
-> checks it ran. A hundred and twenty-two of the hundred and twenty-five runs carry one, published
-> without publishing my machine — I'll come back to how.
+> This is the first direction I gave the system. It asks how language-model systems behave when
+> memory and time are limited. The run developed four threads and recorded seventeen outcomes over
+> roughly forty-three hours.
 
-**A finding, with its envelope** (~20s)
-> Here is the result I would point at. The agent tested whether attention-mass KV-cache eviction
-> keeps the tokens a later question needs. It scored zero percent on non-local retrieval at half
-> cache budget — indistinguishable from evicting at random. That refuted the study's *own* leading
-> hypothesis, and it was recorded as `bounded`, not rewritten into a success. Every finding ends
-> with the envelope its evidence covers and what would not follow from it.
+**Execution view** (~15s)
 
-**A refutation** (~10s)
-> And here it recorded a refutation: randomized-Hadamard rotation does not prevent key quantization
-> damage. Twelve supported, three bounded, one refuted, one inconclusive. A loop that keeps whatever
-> improved the number has nowhere to put a refutation or an inconclusive result.
+*On screen:* switch to **Execution** and let the timeline remain visible while the run summary is
+shown.
 
-**The agent stopping** (~5s)
-> And here the orchestrator paused the direction itself, judging nothing worth doing yet. It then
-> sat at zero cost until new evidence arrived. Not a timer — evidence.
+> This timeline shows where that time went: reasoning, tool calls, model and provider time while
+> responses were generated and returned, idle periods and errors. It makes the run inspectable as a
+> process rather than just a final score.
 
-**A second domain, on a second machine (local-only)** (~20s)
-> This is the same runtime on a DGX Spark, studying something completely different: when a trading
-> strategy found in historical data keeps its edge outside the window it was found in. Its first
-> experiment swept search intensity from one to five thousand strategy variants.
->
-> Best in-sample Sharpe climbs from 0.78 to 4.11 as you search harder. Out of sample it *falls*. And
-> once you charge ten basis points of trading cost, the best-looking strategy of five thousand
-> returns minus 0.89. That is the same research principle in a second domain, with a different
-> evaluator and different resource requirements.
->
-> A decade of later data — 2016 to 2026 — sits outside that machine entirely. The agent has never
-> seen it.
+**Trace** (~15s)
 
-*On screen:* the forwarded local finance dashboard, then the search-intensity table. Do not switch
-to the public mirror for this portion.
+*On screen:* open one attempt from the timeline and scroll through its trace.
+
+> I can select a task and see its original brief and recorded outcome. I can then open one of its
+> attempts and inspect the trace: the model's reasoning and the tools it called. The task view also
+> lists the verified checks. Together, these views show how a proposed experiment led to the result
+> that was recorded.
+
+**Outcome** (~20s)
+
+*On screen:* open the corresponding outcome and show its evidence and status.
+
+> One of these experiments tested whether an inference method continued to work when memory was
+> constrained. It did not. Under the tested conditions, it performed no better than a random
+> baseline. CURI preserved that result as bounded evidence instead of discarding it as a failed run.
 
 ---
 
-## 2:35 – 3:35 — Running on Google Cloud
+## 2:25 – 3:35 — Showing it running locally and in the cloud
 
-This is the required proof beat. Show, do not assert.
+> That is the basic idea. Now let me show where I ran it.
 
-**The live URL** (~20s)
-> The public record is served from Cloud Run. This is the deployed mirror — read-only, no control
-> endpoints, scales to zero.
+**Local run** (~25s)
 
-*On screen:* the `.run.app` URL visible in the address bar; scroll to the published traces.
+*On screen:* the forwarded dashboard on the DGX Spark. Keep this local view separate from the public
+mirror.
 
-**Cloud Run console** (~20s)
-> Here is the service itself in the Cloud Run console: the revision, the region, the request
-> traffic from the page I just loaded.
+> The pipeline itself is domain-blind. It does not know whether the research is about model
+> inference or finance; the domain supplies the question and evaluator. The model layer is plug and
+> play as well. Here it is a locally hosted model on a DGX Spark, but the same pipeline can connect
+> to any supported provider through its API. This run stays local and is not part of the published
+> Firestore record.
 
-*On screen:* Cloud Run → `research-mirror` → Revisions and Metrics.
+**Google Cloud proof** (~60s)
 
-**Firestore** (~20s)
-> And the attention record behind it lives in Firestore — one document per finding, run and trace chunk,
-> written by the supervisor as the research proceeds. The agents themselves are Gemini 3.7 Flash
+*On screen:* cut from the local dashboard to the public mirror and open the attention direction.
+Then show the `.run.app` URL, the Cloud Run service and the Firestore record.
+
+> For this demo, I published the attention direction to Firestore and served it through Cloud Run.
+> This is the public record of the run: its threads, findings, traces and costs. The pipeline itself
+> stayed on the machine that ran it; only this redacted research record is exposed here. I chose that
+> split deliberately. The bottleneck was model latency rather than GPU throughput, so renting a
+> cloud GPU would have added cost without addressing the main constraint.
+>
+> The mirror is read-only, has no control endpoints and scales to zero. Here is the Cloud Run service
+> itself: the revision, region and request traffic from the page I just loaded. And behind it is the
+> Firestore record — one document per finding, run and trace chunk. The agents are Gemini 3.7 Flash
 > through Genkit, with usage metered per model call.
 
-*On screen:* Firestore data browser on `directions/resource-adaptive-inference`, expanding
-`outcomes` and `traceSteps`.
+*On screen:* Cloud Run → `research-mirror` → Revisions and Metrics, then Firestore on
+`directions/resource-adaptive-inference`, expanding `outcomes` and `traceSteps`.
 
 ---
 
@@ -159,8 +162,8 @@ This is the required proof beat. Show, do not assert.
 
 - **Do not fabricate a live run.** If the pipeline is mid-attempt, say so and show the in-flight
   trace; a system that takes 96 minutes on one experiment is more honest than a staged loop.
-- **The strongest 20 seconds** are the refuted hypothesis and the recorded pause. Both are things a
-  score-maximizing loop cannot produce. If you cut for time, cut a dashboard view, not those.
+- **The strongest 20 seconds** are the finding preview and the local-to-cloud transition. If you
+  cut for time, cut a dashboard view, not those proof points.
 - **Say the numbers you can defend.** Across both directions: 214 runs, $60.13, 71.3M input tokens,
   21 recorded outcomes. The attention direction alone: 125 runs, $39.60, 17 outcomes — 12 supported,
   3 bounded, 1 refuted, 1 inconclusive.
