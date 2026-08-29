@@ -115,7 +115,11 @@ export function buildPublishedRecord(store: ResearchStore, directionId: string,
         : publishableTrace(steps, { identifiers, includeToolOutput: options.includeToolOutput });
       traceChunks.push(...chunkTraceSteps(String(item.run_id), published));
       const segments = traceSegments(steps, durationMs)
-        .map(({ kind, label, startMs, endMs, isError }) => ({ kind, label, startMs, endMs, isError }));
+        // `seq` ties a segment to the trace step it came from. It was dropped here
+        // when only timing was published and there was no trace to point at; with
+        // traces published, dropping it meant clicking a bar in the roll selected
+        // nothing and the trace never scrolled to the step.
+        .map(({ kind, label, startMs, endMs, isError, seq }) => ({ kind, label, startMs, endMs, isError, seq }));
       return {
         run_id: item.run_id, task_id: item.task_id, role: item.role, state: item.state,
         // A provider failure carries a stack trace from this machine, so it is

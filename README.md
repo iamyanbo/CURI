@@ -402,7 +402,7 @@ is exactly the limitation recorded below.
 ### Tests
 
 ```bash
-npm test        # 148 tests
+npm test        # 149 tests
 npm run typecheck
 ```
 

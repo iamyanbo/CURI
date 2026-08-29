@@ -210,3 +210,30 @@ test("a provider failure is redacted before it can block publishing", () => {
     assert.match(run.failure, /PROVIDER_ERROR/);
   } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("a published segment keeps the step it points at", () => {
+  // Every published segment carried seq: undefined, so clicking a bar in the
+  // piano roll selected nothing and the trace never scrolled to the step.
+  const { root, store } = fixture();
+  try {
+    const taskId = store.delegateTask({ directionId: "direction", mode: "exploration", markdown: "# Study" });
+    const attemptDir = join(root, "attempt");
+    mkdirSync(attemptDir, { recursive: true });
+    writeFileSync(join(attemptDir, "trace.jsonl"), [
+      JSON.stringify({ seq: 0, kind: "thinking", atMs: 10, content: "considering" }),
+      JSON.stringify({ seq: 1, kind: "tool_call", toolName: "run", toolCallId: "a", atMs: 20, content: "{}" }),
+      JSON.stringify({ seq: 2, kind: "tool_result", toolName: "run", toolCallId: "a", atMs: 900, content: "ok" }),
+    ].join("\n"), "utf8");
+    const runId = store.beginRun({ directionId: "direction", taskId, role: "executor",
+      inputMarkdown: "brief", attemptDir });
+    store.finishRun({ runId, state: "succeeded", outputMarkdown: "done" });
+
+    const record = buildPublishedRecord(store, "direction", root);
+    const run = record.runs[0] as Record<string, any>;
+    const steps = record.traceSteps.flatMap((c: any) => c.steps).map((x: any) => x.seq);
+    for (const segment of run.segments) {
+      assert.notEqual(segment.seq, undefined, "a segment must name its step");
+      assert.ok(steps.includes(segment.seq), `segment seq ${segment.seq} must exist in the published trace`);
+    }
+  } finally { store.close(); rmSync(root, { recursive: true, force: true }); }
+});
